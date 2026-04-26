@@ -1,8 +1,9 @@
 import Foundation
-import Darwin
 import SQLite3
 
+// Define SQLite constants
 let SQLITE_STATIC_PTR = unsafeBitCast(0, to: sqlite3_destructor_type.self)
+let SQLITE_TRANSIENT_PTR = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
 final class IngestionService {
     private let store: DataStore
@@ -17,7 +18,8 @@ final class IngestionService {
         print("DEBUG: Starting ingestion for periodID: \(periodID) (\(year)-\(month))")
         
         try store.database.execute(sql: "PRAGMA synchronous = OFF; PRAGMA journal_mode = OFF; PRAGMA cache_size = -1000000; PRAGMA temp_store = MEMORY; PRAGMA locking_mode = EXCLUSIVE;")
-        try store.database.execute(sql: "DELETE FROM staging_enrollment; DELETE FROM staging_contracts;")
+        try store.database.execute(sql: "DROP TABLE IF EXISTS staging_enrollment; DROP TABLE IF EXISTS staging_contracts;")
+        try store.database.execute(sql: DBSchema.createTables)
         
         let eMapping = try await detectCPSCColumns(url: enrollmentURL)
         let cMapping = try await detectContractColumns(url: contractsURL)
@@ -55,66 +57,40 @@ final class IngestionService {
 
     func ingestLandscape(url: URL, year: Int) async throws {
         print("DEBUG: Starting landscape ingestion from \(url.lastPathComponent) for year \(year)")
-        
         try store.database.execute(sql: "PRAGMA synchronous = OFF; PRAGMA journal_mode = OFF; PRAGMA cache_size = -1000000; PRAGMA temp_store = MEMORY; PRAGMA locking_mode = EXCLUSIVE;")
-        
+        try store.database.execute(sql: "DROP TABLE IF EXISTS staging_landscape;")
+        try store.database.execute(sql: DBSchema.createTables)
         let (mapping, headerRowIndex) = try await detectLandscapeColumns(url: url)
-        if mapping.isEmpty {
-            print("DEBUG: Skipping CSV as no landscape headers were detected: \(url.lastPathComponent)")
-            return
-        }
-        
-        print("DEBUG: Detected Landscape mapping: \(mapping) at row \(headerRowIndex)")
-        
-        // We don't clear staging_landscape here because multiple CSVs might populate it for one year
+        if mapping.isEmpty { return }
         try fastBareMetalStream(url: url, table: "staging_landscape", mapping: mapping, filterEnrollment: false, skipRows: headerRowIndex + 1)
-        
-        print("DEBUG: Finalizing Landscape Merge for \(url.lastPathComponent)")
         let sql = DBSchema.mergeLandscapeToFinal.replacingOccurrences(of: ":year", with: "\(year)")
         try store.database.execute(sql: "BEGIN TRANSACTION; \(sql) COMMIT;")
         try store.database.execute(sql: "DELETE FROM staging_landscape;")
-        
         try store.database.execute(sql: "PRAGMA synchronous = NORMAL; PRAGMA journal_mode = WAL; PRAGMA locking_mode = NORMAL;")
-        print("DEBUG: Landscape Ingestion complete for \(url.lastPathComponent)")
     }
 
     private func detectLandscapeColumns(url: URL) async throws -> (mapping: [String: Int], rowIndex: Int) {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
-        
         guard let data = try handle.read(upToCount: 65536),
               let content = String(data: data, encoding: .utf8) else { return ([:], 0) }
-        
         let lines = content.components(separatedBy: .newlines)
-        
         for (rowIndex, line) in lines.enumerated() {
             let headers = parseCSVLine(line)
             var tempMapping: [String: Int] = [:]
             var foundKeyColumn = false
-            
             for (i, h) in headers.enumerated() {
                 let clean = h.trimmingCharacters(in: .init(charactersIn: "\" ")).lowercased()
-                
-                if (clean.contains("contract") && clean.contains("id")) || (clean == "contract id") { 
-                    tempMapping["contract_id"] = i; foundKeyColumn = true 
-                } else if (clean.contains("plan") && clean.contains("id")) || (clean == "plan id") { 
-                    tempMapping["plan_id"] = i; foundKeyColumn = true 
-                } else if clean.contains("organization") && clean.contains("name") { 
-                    tempMapping["carrier_name"] = i 
-                } else if clean.contains("plan") && clean.contains("name") { 
-                    tempMapping["plan_name"] = i 
-                } else if clean.contains("plan") && clean.contains("type") { 
-                    tempMapping["plan_type"] = i 
-                } else if clean.contains("consolidated") && clean.contains("premium") { 
-                    tempMapping["monthly_premium"] = i 
-                } else if clean.contains("deductible") { 
-                    tempMapping["deductible"] = i 
-                }
+                if (clean.contains("contract") && clean.contains("id")) || (clean == "contract id") { tempMapping["contract_id"] = i; foundKeyColumn = true }
+                else if (clean.contains("plan") && clean.contains("id")) || (clean == "plan id") { tempMapping["plan_id"] = i; foundKeyColumn = true }
+                else if clean.contains("organization") && clean.contains("name") { tempMapping["carrier_name"] = i }
+                else if clean.contains("plan") && clean.contains("name") { tempMapping["plan_name"] = i }
+                else if clean.contains("plan") && clean.contains("type") { tempMapping["plan_type"] = i }
+                else if clean.contains("consolidated") && clean.contains("premium") { tempMapping["monthly_premium"] = i }
+                else if clean.contains("deductible") { tempMapping["deductible"] = i }
+                else if clean == "snp type" { tempMapping["snp_type"] = i }
             }
-            
-            if foundKeyColumn && tempMapping["contract_id"] != nil {
-                return (tempMapping, rowIndex)
-            }
+            if foundKeyColumn && tempMapping["contract_id"] != nil { return (tempMapping, rowIndex) }
         }
         return ([:], 0)
     }
@@ -123,8 +99,8 @@ final class IngestionService {
         let cols: [String] = table == "staging_enrollment" 
             ? ["contract_id", "plan_id", "state", "county", "enrollment"]
             : (table == "staging_contracts" 
-                ? ["contract_id", "plan_id", "organization_type", "plan_type", "offers_part_d", "organization_name", "organization_marketing_name", "plan_name", "parent_organization", "contract_effective_date"]
-                : ["contract_id", "plan_id", "carrier_name", "plan_name", "plan_type", "monthly_premium", "deductible"])
+                ? ["contract_id", "plan_id", "organization_type", "plan_type", "offers_part_d", "organization_name", "organization_marketing_name", "plan_name", "parent_organization", "contract_effective_date", "is_snp", "is_egwp"]
+                : ["contract_id", "plan_id", "carrier_name", "plan_name", "plan_type", "monthly_premium", "deductible", "snp_type"])
 
         let colIndices = cols.map { mapping[$0] ?? -1 }
         let data = try Data(contentsOf: url, options: .mappedIfSafe)
@@ -133,26 +109,19 @@ final class IngestionService {
         defer { sqlite3_finalize(stmt) }
         
         try store.database.execute(sql: "BEGIN TRANSACTION;")
-        
         data.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
             guard let ptr = bytes.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
             let size = bytes.count
-            var lineStart = 0
-            var rowCount = 0
-            var currentLineIndex = 0
+            var lineStart = 0; var rowCount = 0; var currentLineIndex = 0
             var fieldOffsets = [(start: Int, len: Int)](repeating: (0, 0), count: 64)
-            
             while lineStart < size {
                 let remaining = size - lineStart
                 let newline = memchr(ptr.advanced(by: lineStart), 10, remaining)
                 let rawLineEnd = newline.map { ptr.distance(to: $0.assumingMemoryBound(to: UInt8.self)) } ?? size
                 let nextLineStart = newline == nil ? size : rawLineEnd + 1
                 let lineEnd = rawLineEnd > lineStart && ptr[rawLineEnd - 1] == 13 ? rawLineEnd - 1 : rawLineEnd
-                
                 if lineEnd > lineStart {
-                    if currentLineIndex < skipRows {
-                        // Skip header/meta rows
-                    } else {
+                    if currentLineIndex >= skipRows {
                         let skipped = filterEnrollment && isSuppressedEnrollment(ptr: ptr, s: lineStart, e: lineEnd)
                         if !skipped {
                             let fCount = parseFieldsFast(ptr: ptr, s: lineStart, e: lineEnd, offsets: &fieldOffsets)
@@ -162,8 +131,8 @@ final class IngestionService {
                                     let off = fieldOffsets[csvIdx]
                                     if off.len > 0 {
                                         let fieldPtr = ptr.advanced(by: off.start)
-                                        fieldPtr.withMemoryRebound(to: Int8.self, capacity: off.len) { int8Ptr in
-                                            _ = sqlite3_bind_text(stmt, Int32(targetIdx + 1), int8Ptr, Int32(off.len), SQLITE_STATIC_PTR)
+                                        _ = fieldPtr.withMemoryRebound(to: Int8.self, capacity: off.len) { int8Ptr in
+                                            sqlite3_bind_text(stmt, Int32(targetIdx + 1), int8Ptr, Int32(off.len), SQLITE_STATIC_PTR)
                                         }
                                     } else { _ = sqlite3_bind_null(stmt, Int32(targetIdx + 1)) }
                                 } else { _ = sqlite3_bind_null(stmt, Int32(targetIdx + 1)) }
@@ -249,6 +218,8 @@ final class IngestionService {
             else if c.contains("organization") && c.contains("type") { mapping["organization_type"] = i }
             else if c.contains("plan") && c.contains("type") { mapping["plan_type"] = i }
             else if c.contains("part") && c.contains("d") { mapping["offers_part_d"] = i }
+            else if c.contains("snp") { mapping["is_snp"] = i }
+            else if c.contains("eghp") || c.contains("employer") { mapping["is_egwp"] = i }
             else if c.contains("organization") && cleanHeader(c).contains("marketing") { mapping["organization_marketing_name"] = i }
             else if c.contains("organization") && c.contains("name") { mapping["organization_name"] = i }
             else if c.contains("plan") && c.contains("name") { mapping["plan_name"] = i }

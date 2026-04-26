@@ -29,7 +29,9 @@ struct DBSchema {
         organization_marketing_name TEXT,
         plan_name TEXT,
         parent_organization TEXT,
-        contract_effective_date TEXT
+        contract_effective_date TEXT,
+        is_snp TEXT,
+        is_egwp TEXT
     );
 
     -- Staging table for Landscape data
@@ -40,7 +42,8 @@ struct DBSchema {
         plan_name TEXT,
         plan_type TEXT,
         monthly_premium TEXT,
-        deductible TEXT
+        deductible TEXT,
+        snp_type TEXT
     );
 
     -- Final Dimensions
@@ -56,6 +59,9 @@ struct DBSchema {
         name TEXT,
         type TEXT,
         carrier_id INTEGER,
+        is_snp INTEGER DEFAULT 0,
+        is_egwp INTEGER DEFAULT 0,
+        snp_type TEXT,
         FOREIGN KEY (carrier_id) REFERENCES carrier_dim(carrier_id),
         UNIQUE(cms_plan_id, contract_id)
     );
@@ -107,13 +113,15 @@ struct DBSchema {
     SELECT DISTINCT county, state FROM staging_enrollment;
 
     -- Insert new plans
-    INSERT OR IGNORE INTO plan_dim (cms_plan_id, contract_id, name, type, carrier_id)
+    INSERT OR IGNORE INTO plan_dim (cms_plan_id, contract_id, name, type, carrier_id, is_snp, is_egwp)
     SELECT 
         sc.plan_id, 
         sc.contract_id, 
         sc.plan_name, 
         sc.plan_type,
-        c.carrier_id
+        c.carrier_id,
+        CASE WHEN sc.is_snp = 'Yes' OR sc.offers_part_d LIKE '%SNP%' OR sc.organization_type LIKE '%SNP%' THEN 1 ELSE 0 END,
+        CASE WHEN sc.is_egwp = 'Yes' OR sc.parent_organization LIKE '%EGHP%' OR sc.organization_name LIKE '%EGHP%' THEN 1 ELSE 0 END
     FROM staging_contracts sc
     LEFT JOIN carrier_dim c ON c.name = COALESCE(sc.organization_marketing_name, sc.organization_name);
 
@@ -138,6 +146,20 @@ struct DBSchema {
     SELECT DISTINCT carrier_name FROM staging_landscape WHERE carrier_name IS NOT NULL;
 
     -- Insert new plans from landscape
+    INSERT OR IGNORE INTO plan_dim (cms_plan_id, contract_id, name, type, carrier_id, is_snp, snp_type)
+    SELECT 
+        sl.plan_id, 
+        sl.contract_id, 
+        sl.plan_name, 
+        sl.plan_type,
+        c.carrier_id,
+        1,
+        sl.snp_type
+    FROM staging_landscape sl
+    LEFT JOIN carrier_dim c ON c.name = sl.carrier_name
+    WHERE sl.snp_type IS NOT NULL AND sl.snp_type != ''
+    ON CONFLICT(cms_plan_id, contract_id) DO UPDATE SET snp_type = excluded.snp_type, is_snp = 1;
+
     INSERT OR IGNORE INTO plan_dim (cms_plan_id, contract_id, name, type, carrier_id)
     SELECT 
         sl.plan_id, 
@@ -146,7 +168,8 @@ struct DBSchema {
         sl.plan_type,
         c.carrier_id
     FROM staging_landscape sl
-    LEFT JOIN carrier_dim c ON c.name = sl.carrier_name;
+    LEFT JOIN carrier_dim c ON c.name = sl.carrier_name
+    WHERE sl.snp_type IS NULL OR sl.snp_type = '';
 
     -- Insert landscape records
     INSERT OR REPLACE INTO landscape_records (plan_id, year, monthly_premium, deductible)

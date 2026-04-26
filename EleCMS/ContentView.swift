@@ -1,23 +1,27 @@
 import SwiftUI
 
-struct MainTabView: View {
+struct MainContainerView: View {
     let dataStore: DataStore
     
+    @State private var isMenuOpen = false
+    @State private var selectedDestination: NavDestination = .marketOverview
+    
     var body: some View {
-        TabView {
-            DashboardView(dataStore: dataStore)
-                .tabItem {
-                    Label("Analytics", systemImage: "chart.bar.fill")
+        SideMenuContainer(isMenuOpen: $isMenuOpen, selectedDestination: $selectedDestination) {
+            // Using a unique ID for the content block based on selection to force fresh state if needed
+            Group {
+                switch selectedDestination {
+                case .marketOverview:
+                    DashboardView(dataStore: dataStore, isMenuOpen: $isMenuOpen)
+                case .geographicDeepDive:
+                    GeographicDeepDiveView(dataStore: dataStore, isMenuOpen: $isMenuOpen)
+                case .carrierDeepDive:
+                    CarrierDeepDiveView(dataStore: dataStore, isMenuOpen: $isMenuOpen)
+                case .dataCatalog:
+                    DataManagementView(dataStore: dataStore, isMenuOpen: $isMenuOpen)
                 }
-            
-            DataManagementView(dataStore: dataStore)
-                .tabItem {
-                    Label("Data", systemImage: "server.rack")
-                }
-        }
-        .accentColor(.blue)
-        .onAppear {
-            Theme.setup()
+            }
+            .id(selectedDestination) // Force content recreate on nav
         }
     }
 }
@@ -29,7 +33,7 @@ struct ContentView: View {
     var body: some View {
         Group {
             if let dataStore = dataStore {
-                MainTabView(dataStore: dataStore)
+                MainContainerView(dataStore: dataStore)
             } else if let error = errorMessage {
                 ZStack {
                     AppColors.background.ignoresSafeArea()
@@ -49,7 +53,7 @@ struct ContentView: View {
             } else {
                 ZStack {
                     AppColors.background.ignoresSafeArea()
-                    ProgressView("Booting EleCMS...")
+                    ProgressView("Booting Intelligence Engine...")
                         .tint(.white)
                         .foregroundColor(.white)
                 }
@@ -70,6 +74,7 @@ struct ContentView: View {
         
         do {
             dataStore = try DataStore(directory: documentsURL)
+            Theme.setup()
         } catch {
             errorMessage = error.localizedDescription
         }

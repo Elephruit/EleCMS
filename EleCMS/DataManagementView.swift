@@ -2,6 +2,7 @@ import SwiftUI
 
 struct DataManagementView: View {
     let dataStore: DataStore
+    @Binding var isMenuOpen: Bool
     @StateObject private var syncService: SyncService
     
     @State private var loadedPeriods: Set<Int> = []
@@ -10,56 +11,29 @@ struct DataManagementView: View {
     let years = Array((2015...Calendar.current.component(.year, from: Date())).reversed())
     let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     
-    init(dataStore: DataStore) {
+    init(dataStore: DataStore, isMenuOpen: Binding<Bool>) {
         self.dataStore = dataStore
-        _syncService = StateObject(wrappedValue: SyncService(dataStore: dataStore))
+        self._isMenuOpen = isMenuOpen
+        self._syncService = StateObject(wrappedValue: SyncService(dataStore: dataStore))
     }
     
     var body: some View {
         ZStack {
             AppColors.background.ignoresSafeArea()
             
-            VStack(spacing: 20) {
-                // Header
-                HStack {
-                    VStack(alignment: .leading) {
-                        Text("Data Catalog")
-                            .font(.system(size: 34, weight: .bold, design: .rounded))
-                            .foregroundColor(.white)
-                        Text("CPSC & Landscape Records")
-                            .font(.subheadline)
-                            .foregroundColor(.gray)
-                    }
-                    Spacer()
-                }
-                .padding(.horizontal)
-                
-                // Year Selector
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        ForEach(years, id: \.self) { year in
-                            Button(action: { selectedYear = year }) {
-                                Text(String(format: "%d", year))
-                                    .fontWeight(.bold)
-                                    .padding(.vertical, 8)
-                                    .padding(.horizontal, 16)
-                                    .background(selectedYear == year ? Color.blue : AppColors.surface)
-                                    .foregroundColor(.white)
-                                    .cornerRadius(12)
-                            }
-                        }
-                    }
-                    .padding(.horizontal)
-                }
+            VStack(spacing: 0) {
+                headerView
                 
                 ScrollView {
                     VStack(spacing: 24) {
+                        yearSelector
+                        
                         // Landscape Section
                         VStack(alignment: .leading, spacing: 12) {
                             Text("ANNUAL LANDSCAPE")
-                                .font(.caption)
-                                .fontWeight(.bold)
+                                .font(.system(size: 11, weight: .black))
                                 .foregroundColor(.blue)
+                                .kerning(1.2)
                                 .padding(.horizontal)
                             
                             ModernCard {
@@ -77,7 +51,6 @@ struct DataManagementView: View {
                                 }
                             }
                             .onTapGesture {
-                                print("DEBUG: Landscape card tapped for year \(selectedYear)")
                                 handleAction(year: selectedYear, month: nil)
                             }
                             .padding(.horizontal)
@@ -86,9 +59,9 @@ struct DataManagementView: View {
                         // Monthly CPSC Section
                         VStack(alignment: .leading, spacing: 12) {
                             Text("MONTHLY ENROLLMENT (CPSC)")
-                                .font(.caption)
-                                .fontWeight(.bold)
+                                .font(.system(size: 11, weight: .black))
                                 .foregroundColor(.blue)
+                                .kerning(1.2)
                                 .padding(.horizontal)
                             
                             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
@@ -108,7 +81,6 @@ struct DataManagementView: View {
                                         }
                                     }
                                     .onTapGesture {
-                                        print("DEBUG: CPSC card tapped for \(selectedYear)-\(month)")
                                         handleAction(year: selectedYear, month: month)
                                     }
                                 }
@@ -116,30 +88,73 @@ struct DataManagementView: View {
                             .padding(.horizontal)
                         }
                     }
-                    .padding(.bottom, 100)
+                    .padding(.vertical, 24)
+                    .padding(.bottom, 60)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             
-            // Progress Overlay
             if syncService.isSyncing {
                 ZStack {
                     Color.black.opacity(0.6).ignoresSafeArea()
                     ModernCard {
                         VStack(spacing: 16) {
-                            ProgressView()
-                                .tint(.white)
+                            ProgressView().tint(.white)
                             Text(syncService.status)
                                 .font(.subheadline)
                                 .foregroundColor(.white)
                                 .multilineTextAlignment(.center)
                         }
-                        .frame(width: 200)
+                        .frame(width: 220)
                     }
                 }
             }
         }
-        .onAppear {
-            refreshStatus()
+        .onAppear { refreshStatus() }
+    }
+    
+    var headerView: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button(action: { withAnimation(.spring()) { isMenuOpen = true } }) {
+                    ZStack {
+                        Circle().fill(AppColors.surface).frame(width: 40, height: 40)
+                        Image(systemName: "line.3.horizontal")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundColor(.white)
+                    }
+                }
+                Spacer()
+                Text("Data Management")
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                Spacer()
+                Color.clear.frame(width: 40)
+            }
+            .padding(.horizontal)
+            .frame(height: 64)
+            .background(AppColors.background.opacity(0.95))
+            
+            Divider().background(Color.white.opacity(0.1))
+        }
+    }
+    
+    var yearSelector: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
+                ForEach(years, id: \.self) { year in
+                    Button(action: { selectedYear = year }) {
+                        Text(String(format: "%d", year))
+                            .font(.system(size: 14, weight: .bold))
+                            .padding(.vertical, 8)
+                            .padding(.horizontal, 16)
+                            .background(selectedYear == year ? Color.blue : AppColors.surface)
+                            .foregroundColor(.white)
+                            .cornerRadius(12)
+                    }
+                }
+            }
+            .padding(.horizontal)
         }
     }
     
@@ -152,20 +167,16 @@ struct DataManagementView: View {
     }
     
     func isLoaded(year: Int, month: Int?) -> Bool {
-        // Month 0 or nil = Landscape for that year
         let key = year * 100 + (month ?? 0)
         return loadedPeriods.contains(key)
     }
     
     func handleAction(year: Int, month: Int?) {
         if isLoaded(year: year, month: month) {
-            print("DEBUG: Deleting data for \(year)-\(month ?? 0)")
             deleteData(year: year, month: month)
         } else {
-            print("DEBUG: Starting sync for \(year)-\(month ?? 0)")
             Task {
                 await syncService.syncSpecific(year: year, month: month)
-                print("DEBUG: Sync finished, refreshing status")
                 refreshStatus()
             }
         }
@@ -184,12 +195,8 @@ struct DataManagementView: View {
                     let m = row["month"] as? Int ?? 0
                     return y * 100 + m
                 }
-                await MainActor.run {
-                    self.loadedPeriods = Set(keys)
-                }
-            } catch {
-                print("Failed to fetch periods: \(error)")
-            }
+                await MainActor.run { self.loadedPeriods = Set(keys) }
+            } catch { print("Status failed: \(error)") }
         }
     }
     
@@ -203,16 +210,10 @@ struct DataManagementView: View {
                         try dataStore.database.execute(sql: "DELETE FROM periods WHERE period_id = \(periodID)")
                     }
                 } else {
-                    // Delete landscape for year
                     try dataStore.database.execute(sql: "DELETE FROM landscape_records WHERE year = \(year)")
-                    // Also delete from periods if we ever track landscape there, 
-                    // but for now it's tracked by a synthetic period key (year * 100)
-                    try dataStore.database.execute(sql: "DELETE FROM periods WHERE year = \(year) AND month = 0")
                 }
                 refreshStatus()
-            } catch {
-                print("Delete failed: \(error)")
-            }
+            } catch { print("Delete failed: \(error)") }
         }
     }
 }
