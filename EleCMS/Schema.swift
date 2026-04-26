@@ -39,8 +39,8 @@ struct DBSchema {
         carrier_name TEXT,
         plan_name TEXT,
         plan_type TEXT,
-        monthly_premium REAL,
-        deductible REAL
+        monthly_premium TEXT,
+        deductible TEXT
     );
 
     -- Final Dimensions
@@ -76,6 +76,15 @@ struct DBSchema {
         PRIMARY KEY (plan_id, county_id, period_id),
         FOREIGN KEY (plan_id) REFERENCES plan_dim(plan_id),
         FOREIGN KEY (county_id) REFERENCES county_dim(county_id)
+    ) WITHOUT ROWID;
+
+    CREATE TABLE IF NOT EXISTS landscape_records (
+        plan_id INTEGER NOT NULL,
+        year INTEGER NOT NULL,
+        monthly_premium REAL,
+        deductible REAL,
+        PRIMARY KEY (plan_id, year),
+        FOREIGN KEY (plan_id) REFERENCES plan_dim(plan_id)
     ) WITHOUT ROWID;
 
     CREATE TABLE IF NOT EXISTS periods (
@@ -121,6 +130,33 @@ struct DBSchema {
     WHERE se.enrollment NOT LIKE '*%' 
       AND se.enrollment IS NOT NULL 
       AND se.enrollment != '';
+    """
+
+    static let mergeLandscapeToFinal: String = """
+    -- Insert new carriers from landscape
+    INSERT OR IGNORE INTO carrier_dim (name)
+    SELECT DISTINCT carrier_name FROM staging_landscape WHERE carrier_name IS NOT NULL;
+
+    -- Insert new plans from landscape
+    INSERT OR IGNORE INTO plan_dim (cms_plan_id, contract_id, name, type, carrier_id)
+    SELECT 
+        sl.plan_id, 
+        sl.contract_id, 
+        sl.plan_name, 
+        sl.plan_type,
+        c.carrier_id
+    FROM staging_landscape sl
+    LEFT JOIN carrier_dim c ON c.name = sl.carrier_name;
+
+    -- Insert landscape records
+    INSERT OR REPLACE INTO landscape_records (plan_id, year, monthly_premium, deductible)
+    SELECT 
+        p.plan_id,
+        :year,
+        CAST(REPLACE(REPLACE(sl.monthly_premium, '$', ''), ',', '') AS REAL),
+        CAST(REPLACE(REPLACE(sl.deductible, '$', ''), ',', '') AS REAL)
+    FROM staging_landscape sl
+    JOIN plan_dim p ON p.cms_plan_id = sl.plan_id AND p.contract_id = sl.contract_id;
     """
 
     static let momSQLExample: String = """

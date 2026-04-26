@@ -67,8 +67,9 @@ final class CMSFetcher {
         guard let html = String(data: data, encoding: .utf8) else { return [] }
         
         let patterns = [
-            #"(/files/zip/cy(\d{4})-landscape-files-(\d+)\.zip)"#,
-            #"(/files/zip/cy(\d{4})-landscape-files\.zip)"#
+            #"href=\"(/files/zip/cy(\d{4})-landscape-(\d+)\.zip)\""#,
+            #"href=\"(/files/zip/cy(\d{4})-landscape-files\.zip)\""#,
+            #"href=\"(/files/zip/cy(\d{4})-cy(\d{4})-landscape-files\.zip)\""#
         ]
         
         var tasks: [CMSDownloadTask] = []
@@ -78,11 +79,18 @@ final class CMSFetcher {
             
             for match in matches {
                 if let zipRange = Range(match.range(at: 1), in: html),
-                   let yearRange = Range(match.range(at: 2), in: html),
-                   let year = Int(html[yearRange]) {
+                   let yearRange = Range(match.range(at: 2), in: html) {
                     let zipPath = String(html[zipRange])
                     let zipURL = zipPath.hasPrefix("http") ? URL(string: zipPath)! : URL(string: "https://www.cms.gov" + zipPath)!
-                    tasks.append(CMSDownloadTask(url: zipURL, type: .landscape, year: year, month: nil))
+                    
+                    if match.numberOfRanges >= 4, let endYearRange = Range(match.range(at: 3), in: html), let endYear = Int(html[endYearRange]), endYear > 2000 {
+                        // This is a range file, e.g., 2006-2025
+                        let startYear = Int(html[yearRange]) ?? 0
+                        tasks.append(CMSDownloadTask(url: zipURL, type: .landscape, year: endYear, month: startYear)) // Use month as startYear for internal tracking
+                    } else {
+                        let year = Int(html[yearRange]) ?? 0
+                        tasks.append(CMSDownloadTask(url: zipURL, type: .landscape, year: year, month: nil))
+                    }
                 }
             }
         }

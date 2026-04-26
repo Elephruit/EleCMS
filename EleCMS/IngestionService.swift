@@ -16,13 +16,7 @@ final class IngestionService {
         let periodID = try store.getPeriodID(year: year, month: month)
         print("DEBUG: Starting ingestion for periodID: \(periodID) (\(year)-\(month))")
         
-        // Optimize for massive bulk loading
         try store.database.execute(sql: "PRAGMA synchronous = OFF; PRAGMA journal_mode = OFF; PRAGMA cache_size = -1000000; PRAGMA temp_store = MEMORY; PRAGMA locking_mode = EXCLUSIVE;")
-        try store.database.execute(sql: """
-            DROP INDEX IF EXISTS idx_stg_enr_join;
-            DROP INDEX IF EXISTS idx_stg_enr_geo;
-            DROP INDEX IF EXISTS idx_stg_con_join;
-        """)
         try store.database.execute(sql: "DELETE FROM staging_enrollment; DELETE FROM staging_contracts;")
         
         let eMapping = try await detectCPSCColumns(url: enrollmentURL)
@@ -30,20 +24,20 @@ final class IngestionService {
         
         print("DEBUG: [1/4] Ultra-Fast Enrollment Ingestion...")
         let eStart = Date()
-        try fastBareMetalStream(url: enrollmentURL, table: "staging_enrollment", mapping: eMapping, filterEnrollment: true)
+        try fastBareMetalStream(url: enrollmentURL, table: "staging_enrollment", mapping: eMapping, filterEnrollment: true, skipRows: 1)
         print("DEBUG: Enrollment took \(Date().timeIntervalSince(eStart))s")
         
         print("DEBUG: [2/4] Contract Ingestion...")
         let cStart = Date()
-        try fastBareMetalStream(url: contractsURL, table: "staging_contracts", mapping: cMapping, filterEnrollment: false)
+        try fastBareMetalStream(url: contractsURL, table: "staging_contracts", mapping: cMapping, filterEnrollment: false, skipRows: 1)
         print("DEBUG: Contract took \(Date().timeIntervalSince(cStart))s")
         
         print("DEBUG: [3/4] Indexing...")
         let idxStart = Date()
         try store.database.execute(sql: """
-            CREATE INDEX idx_stg_enr_join ON staging_enrollment(plan_id, contract_id);
-            CREATE INDEX idx_stg_enr_geo ON staging_enrollment(county, state);
-            CREATE INDEX idx_stg_con_join ON staging_contracts(plan_id, contract_id);
+            CREATE INDEX IF NOT EXISTS idx_stg_enr_join ON staging_enrollment(plan_id, contract_id);
+            CREATE INDEX IF NOT EXISTS idx_stg_enr_geo ON staging_enrollment(county, state);
+            CREATE INDEX IF NOT EXISTS idx_stg_con_join ON staging_contracts(plan_id, contract_id);
         """)
         print("DEBUG: Indexing took \(Date().timeIntervalSince(idxStart))s")
         
@@ -55,14 +49,82 @@ final class IngestionService {
         
         try store.database.execute(sql: "PRAGMA synchronous = NORMAL; PRAGMA journal_mode = WAL; PRAGMA locking_mode = NORMAL;")
         let count = try store.database.query(sql: "SELECT COUNT(*) as c FROM enrollment_records WHERE period_id = \(periodID)")
-        print("DEBUG: Total Records in Dashboard: \(count.first?["c"] ?? 0)")
+        print("DEBUG: Total Records Merged: \(count.first?["c"] ?? 0)")
         print("DEBUG: --- OVERALL TIME: \(Date().timeIntervalSince(overallStart))s ---")
     }
 
-    private func fastBareMetalStream(url: URL, table: String, mapping: [String: Int], filterEnrollment: Bool) throws {
+    func ingestLandscape(url: URL, year: Int) async throws {
+        print("DEBUG: Starting landscape ingestion from \(url.lastPathComponent) for year \(year)")
+        
+        try store.database.execute(sql: "PRAGMA synchronous = OFF; PRAGMA journal_mode = OFF; PRAGMA cache_size = -1000000; PRAGMA temp_store = MEMORY; PRAGMA locking_mode = EXCLUSIVE;")
+        
+        let (mapping, headerRowIndex) = try await detectLandscapeColumns(url: url)
+        if mapping.isEmpty {
+            print("DEBUG: Skipping CSV as no landscape headers were detected: \(url.lastPathComponent)")
+            return
+        }
+        
+        print("DEBUG: Detected Landscape mapping: \(mapping) at row \(headerRowIndex)")
+        
+        // We don't clear staging_landscape here because multiple CSVs might populate it for one year
+        try fastBareMetalStream(url: url, table: "staging_landscape", mapping: mapping, filterEnrollment: false, skipRows: headerRowIndex + 1)
+        
+        print("DEBUG: Finalizing Landscape Merge for \(url.lastPathComponent)")
+        let sql = DBSchema.mergeLandscapeToFinal.replacingOccurrences(of: ":year", with: "\(year)")
+        try store.database.execute(sql: "BEGIN TRANSACTION; \(sql) COMMIT;")
+        try store.database.execute(sql: "DELETE FROM staging_landscape;")
+        
+        try store.database.execute(sql: "PRAGMA synchronous = NORMAL; PRAGMA journal_mode = WAL; PRAGMA locking_mode = NORMAL;")
+        print("DEBUG: Landscape Ingestion complete for \(url.lastPathComponent)")
+    }
+
+    private func detectLandscapeColumns(url: URL) async throws -> (mapping: [String: Int], rowIndex: Int) {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        
+        guard let data = try handle.read(upToCount: 65536),
+              let content = String(data: data, encoding: .utf8) else { return ([:], 0) }
+        
+        let lines = content.components(separatedBy: .newlines)
+        
+        for (rowIndex, line) in lines.enumerated() {
+            let headers = parseCSVLine(line)
+            var tempMapping: [String: Int] = [:]
+            var foundKeyColumn = false
+            
+            for (i, h) in headers.enumerated() {
+                let clean = h.trimmingCharacters(in: .init(charactersIn: "\" ")).lowercased()
+                
+                if (clean.contains("contract") && clean.contains("id")) || (clean == "contract id") { 
+                    tempMapping["contract_id"] = i; foundKeyColumn = true 
+                } else if (clean.contains("plan") && clean.contains("id")) || (clean == "plan id") { 
+                    tempMapping["plan_id"] = i; foundKeyColumn = true 
+                } else if clean.contains("organization") && clean.contains("name") { 
+                    tempMapping["carrier_name"] = i 
+                } else if clean.contains("plan") && clean.contains("name") { 
+                    tempMapping["plan_name"] = i 
+                } else if clean.contains("plan") && clean.contains("type") { 
+                    tempMapping["plan_type"] = i 
+                } else if clean.contains("consolidated") && clean.contains("premium") { 
+                    tempMapping["monthly_premium"] = i 
+                } else if clean.contains("deductible") { 
+                    tempMapping["deductible"] = i 
+                }
+            }
+            
+            if foundKeyColumn && tempMapping["contract_id"] != nil {
+                return (tempMapping, rowIndex)
+            }
+        }
+        return ([:], 0)
+    }
+
+    private func fastBareMetalStream(url: URL, table: String, mapping: [String: Int], filterEnrollment: Bool, skipRows: Int) throws {
         let cols: [String] = table == "staging_enrollment" 
             ? ["contract_id", "plan_id", "state", "county", "enrollment"]
-            : ["contract_id", "plan_id", "organization_type", "plan_type", "offers_part_d", "organization_name", "organization_marketing_name", "plan_name", "parent_organization", "contract_effective_date"]
+            : (table == "staging_contracts" 
+                ? ["contract_id", "plan_id", "organization_type", "plan_type", "offers_part_d", "organization_name", "organization_marketing_name", "plan_name", "parent_organization", "contract_effective_date"]
+                : ["contract_id", "plan_id", "carrier_name", "plan_name", "plan_type", "monthly_premium", "deductible"])
 
         let colIndices = cols.map { mapping[$0] ?? -1 }
         let data = try Data(contentsOf: url, options: .mappedIfSafe)
@@ -76,10 +138,9 @@ final class IngestionService {
             guard let ptr = bytes.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
             let size = bytes.count
             var lineStart = 0
-            var isHeader = true
             var rowCount = 0
-            var skippedCount = 0
-            var fieldOffsets = [(start: Int, len: Int)](repeating: (0, 0), count: 32)
+            var currentLineIndex = 0
+            var fieldOffsets = [(start: Int, len: Int)](repeating: (0, 0), count: 64)
             
             while lineStart < size {
                 let remaining = size - lineStart
@@ -89,12 +150,11 @@ final class IngestionService {
                 let lineEnd = rawLineEnd > lineStart && ptr[rawLineEnd - 1] == 13 ? rawLineEnd - 1 : rawLineEnd
                 
                 if lineEnd > lineStart {
-                    if isHeader { isHeader = false }
-                    else {
+                    if currentLineIndex < skipRows {
+                        // Skip header/meta rows
+                    } else {
                         let skipped = filterEnrollment && isSuppressedEnrollment(ptr: ptr, s: lineStart, e: lineEnd)
-                        if skipped {
-                            skippedCount += 1
-                        } else {
+                        if !skipped {
                             let fCount = parseFieldsFast(ptr: ptr, s: lineStart, e: lineEnd, offsets: &fieldOffsets)
                             _ = sqlite3_reset(stmt)
                             for (targetIdx, csvIdx) in colIndices.enumerated() {
@@ -112,24 +172,21 @@ final class IngestionService {
                             rowCount += 1
                         }
                     }
+                    currentLineIndex += 1
                 }
-                
                 lineStart = nextLineStart
             }
-            print("DEBUG: \(table) Summary -> Inserted: \(rowCount), Skipped (*): \(skippedCount)")
+            print("DEBUG: \(table) Ingested \(rowCount) rows")
         }
         try store.database.execute(sql: "COMMIT;")
     }
 
     private func isSuppressedEnrollment(ptr: UnsafePointer<UInt8>, s: Int, e: Int) -> Bool {
-        // CMS enrollment is the final column in CPSC enrollment exports.
         var lastComma = e - 1
         while lastComma > s && ptr[lastComma] != 44 { lastComma -= 1 }
-        
         var firstCharIdx = lastComma + 1
         while firstCharIdx < e && ptr[firstCharIdx] <= 32 { firstCharIdx += 1 }
         if firstCharIdx >= e { return false }
-        
         let c1 = ptr[firstCharIdx]
         if c1 == 42 { return true }
         return c1 == 34 && firstCharIdx + 1 < e && ptr[firstCharIdx + 1] == 42
@@ -192,7 +249,7 @@ final class IngestionService {
             else if c.contains("organization") && c.contains("type") { mapping["organization_type"] = i }
             else if c.contains("plan") && c.contains("type") { mapping["plan_type"] = i }
             else if c.contains("part") && c.contains("d") { mapping["offers_part_d"] = i }
-            else if c.contains("organization") && c.contains("marketing") { mapping["organization_marketing_name"] = i }
+            else if c.contains("organization") && cleanHeader(c).contains("marketing") { mapping["organization_marketing_name"] = i }
             else if c.contains("organization") && c.contains("name") { mapping["organization_name"] = i }
             else if c.contains("plan") && c.contains("name") { mapping["plan_name"] = i }
             else if c.contains("parent") { mapping["parent_organization"] = i }
@@ -210,10 +267,8 @@ final class IngestionService {
         }
         res.append(cur); return res
     }
+}
 
-    func ingestLandscape(url: URL) async throws {
-        try store.database.execute(sql: "DELETE FROM staging_landscape")
-        let m = ["contract_id": 0, "plan_id": 1, "carrier_name": 2, "plan_name": 3, "plan_type": 4, "monthly_premium": 5, "deductible": 6]
-        try fastBareMetalStream(url: url, table: "staging_landscape", mapping: m, filterEnrollment: false)
-    }
+extension SQLiteDatabase {
+    var dbPointer: OpaquePointer? { return Mirror(reflecting: self).descendant("db") as? OpaquePointer }
 }

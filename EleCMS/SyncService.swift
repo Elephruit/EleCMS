@@ -30,35 +30,22 @@ final class SyncService: ObservableObject {
                 let tasks = try await fetcher.scrapeCPSCPage()
                 
                 var urlsToTry: [URL] = []
-                
-                // 1. Scraped tasks
-                if let task = tasks.first(where: { $0.year == year && $0.month == m }) {
-                    urlsToTry.append(task.url)
-                }
-                
-                // 2. Full Month Name Pattern (observed in 2026: cpsc-january-2026.zip)
+                if let task = tasks.first(where: { $0.year == year && $0.month == m }) { urlsToTry.append(task.url) }
                 let fullMonthName = monthNames[m-1]
                 urlsToTry.append(URL(string: "https://www.cms.gov/files/zip/monthly-enrollment-cpsc-\(fullMonthName)-\(year).zip")!)
-                
-                // 3. Numeric Patterns
                 urlsToTry.append(URL(string: "https://www.cms.gov/files/zip/monthly-enrollment-cpsc-\(year)-\(String(format: "%02d", m)).zip")!)
                 urlsToTry.append(URL(string: "https://www.cms.gov/files/zip/monthly_enrollment_cpsc_\(year)_\(String(format: "%02d", m)).zip")!)
                 
                 var zipURL: URL? = nil
                 var lastError: Error? = nil
-                
                 for url in urlsToTry {
                     print("DEBUG: Trying URL: \(url)")
                     do {
                         let task = CMSDownloadTask(url: url, type: .cpscEnrollment, year: year, month: m)
                         zipURL = try await fetcher.download(task: task)
-                        if zipURL != nil { 
-                            print("DEBUG: Download successful for: \(url)")
-                            break 
-                        }
+                        if zipURL != nil { break }
                     } catch {
                         lastError = error
-                        print("DEBUG: Attempt failed for \(url): \(error.localizedDescription)")
                     }
                 }
                 
@@ -68,51 +55,83 @@ final class SyncService: ObservableObject {
                 
                 await MainActor.run { status = "Extracting..." }
                 let extractedFiles = try fetcher.unzip(url: finalZipURL)
-                print("DEBUG: Extracted \(extractedFiles.count) files")
-                for file in extractedFiles {
-                    print("DEBUG: Extracted file: \(file.lastPathComponent)")
-                }
-                
-                // Flexible search for enrollment and contract files based on observed naming
-                let enrollmentCSV = extractedFiles.first { file in
-                    let name = file.lastPathComponent.lowercased()
-                    return name.contains("enrollment") && name.contains("info") && name.hasSuffix(".csv")
-                } ?? extractedFiles.first { file in
-                    let name = file.lastPathComponent.lowercased()
-                    return name.contains("enrollment") && name.hasSuffix(".csv")
-                }
-                
-                let contractCSV = extractedFiles.first { file in
-                    let name = file.lastPathComponent.lowercased()
-                    return name.contains("contract") && name.contains("info") && name.hasSuffix(".csv")
-                } ?? extractedFiles.first { file in
-                    let name = file.lastPathComponent.lowercased()
-                    return name.contains("contract") && name.hasSuffix(".csv")
-                }
+                let enrollmentCSV = extractedFiles.first { $0.lastPathComponent.localizedCaseInsensitiveContains("enrollment") && $0.pathExtension.lowercased() == "csv" }
+                let contractCSV = extractedFiles.first { $0.lastPathComponent.localizedCaseInsensitiveContains("contract") && $0.pathExtension.lowercased() == "csv" }
                 
                 guard let eCSV = enrollmentCSV, let cCSV = contractCSV else {
-                    print("DEBUG: Missing expected CSVs. Found: \(extractedFiles.map { $0.lastPathComponent })")
-                    throw NSError(domain: "Sync", code: 404, userInfo: [NSLocalizedDescriptionKey: "Required Enrollment/Contract CSV files not found in the ZIP archive. Found: \(extractedFiles.map { $0.lastPathComponent }.joined(separator: ", "))"])
+                    throw NSError(domain: "Sync", code: 404, userInfo: [NSLocalizedDescriptionKey: "Required Enrollment/Contract CSV files not found."])
                 }
-                
-                print("DEBUG: Selected Enrollment CSV: \(eCSV.lastPathComponent)")
-                print("DEBUG: Selected Contract CSV: \(cCSV.lastPathComponent)")
                 
                 await MainActor.run { status = "Ingesting..." }
                 try await ingestion.ingestCPSC(enrollmentURL: eCSV, contractsURL: cCSV, year: year, month: m)
                 
             } else {
-                // Annual Landscape logic
+                print("DEBUG: Handling Annual Landscape sync for year \(year)")
                 let tasks = try await fetcher.scrapeLandscapePage()
-                let task = tasks.first(where: { $0.year == year }) ??
-                           CMSDownloadTask(url: URL(string: "https://www.cms.gov/files/zip/cy\(year)-landscape-files.zip")!, type: .landscape, year: year, month: nil)
                 
-                let zipURL = try await fetcher.download(task: task)
-                let extractedFiles = try fetcher.unzip(url: zipURL)
+                var urlsToTry: [URL] = []
+                if let directTask = tasks.first(where: { $0.year == year && $0.month == nil }) { urlsToTry.append(directTask.url) }
+                if let rangeTask = tasks.first(where: { ($0.month ?? 0) <= year && $0.year >= year }) { urlsToTry.append(rangeTask.url) }
+                urlsToTry.append(URL(string: "https://www.cms.gov/files/zip/cy\(year)-landscape-files.zip")!)
                 
-                if let landscapeCSV = extractedFiles.first(where: { $0.pathExtension.lowercased() == "csv" }) {
-                    await MainActor.run { status = "Ingesting Landscape..." }
-                    try await ingestion.ingestLandscape(url: landscapeCSV)
+                var zipURL: URL? = nil
+                var lastError: Error? = nil
+                for url in urlsToTry {
+                    print("DEBUG: Trying Landscape URL: \(url)")
+                    do {
+                        let task = CMSDownloadTask(url: url, type: .landscape, year: year, month: nil)
+                        zipURL = try await fetcher.download(task: task)
+                        if zipURL != nil { break }
+                    } catch {
+                        lastError = error
+                    }
+                }
+                
+                guard let finalZipURL = zipURL else {
+                    throw lastError ?? NSError(domain: "Sync", code: 404, userInfo: [NSLocalizedDescriptionKey: "Could not find Landscape file for \(year)."])
+                }
+                
+                await MainActor.run { status = "Extracting Landscape..." }
+                let extractedFiles = try fetcher.unzip(url: finalZipURL)
+                
+                var csvFiles: [URL] = []
+                func collectCSVs(from files: [URL], forYear targetYear: Int) throws {
+                    let yearStr = "\(targetYear)"
+                    for file in files {
+                        let name = file.lastPathComponent
+                        if file.pathExtension.lowercased() == "zip" {
+                            // ONLY drill into ZIPs that strictly mention our target year
+                            if name.contains(yearStr) {
+                                print("DEBUG: Unzipping strictly relevant ZIP: \(name)")
+                                let nestedFiles = try fetcher.unzip(url: file)
+                                try collectCSVs(from: nestedFiles, forYear: targetYear)
+                            }
+                        } else if file.pathExtension.lowercased() == "csv" {
+                            // ONLY collect CSVs that strictly match the year OR are in a path that does
+                            if name.contains(yearStr) || file.path.contains(yearStr) {
+                                let lower = name.lowercased()
+                                if !lower.contains("readme") && !lower.contains("read_me") {
+                                    csvFiles.append(file)
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                try collectCSVs(from: extractedFiles, forYear: year)
+                
+                if csvFiles.isEmpty {
+                    throw NSError(domain: "Sync", code: 404, userInfo: [NSLocalizedDescriptionKey: "No data files matching \(year) were found in the archive."])
+                }
+                
+                print("DEBUG: Found \(csvFiles.count) Landscape CSVs for \(year)")
+                await MainActor.run { status = "Ingesting Landscape..." }
+                
+                // Clear staging once for the year
+                try dataStore.database.execute(sql: "DELETE FROM staging_landscape;")
+                for csv in csvFiles {
+                    print("DEBUG: Ingesting: \(csv.lastPathComponent)")
+                    try await ingestion.ingestLandscape(url: csv, year: year)
                 }
             }
             

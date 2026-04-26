@@ -174,7 +174,11 @@ struct DataManagementView: View {
     func refreshStatus() {
         Task {
             do {
-                let periods = try dataStore.database.query(sql: "SELECT year, month FROM periods")
+                let periods = try dataStore.database.query(sql: """
+                    SELECT year, month FROM periods
+                    UNION
+                    SELECT DISTINCT year, 0 as month FROM landscape_records
+                """)
                 let keys = periods.map { row in
                     let y = row["year"] as? Int ?? 0
                     let m = row["month"] as? Int ?? 0
@@ -199,8 +203,11 @@ struct DataManagementView: View {
                         try dataStore.database.execute(sql: "DELETE FROM periods WHERE period_id = \(periodID)")
                     }
                 } else {
-                    // Delete landscape for year logic
-                    try dataStore.database.execute(sql: "DELETE FROM staging_landscape WHERE 1=1") // Placeholder
+                    // Delete landscape for year
+                    try dataStore.database.execute(sql: "DELETE FROM landscape_records WHERE year = \(year)")
+                    // Also delete from periods if we ever track landscape there, 
+                    // but for now it's tracked by a synthetic period key (year * 100)
+                    try dataStore.database.execute(sql: "DELETE FROM periods WHERE year = \(year) AND month = 0")
                 }
                 refreshStatus()
             } catch {
