@@ -6,10 +6,12 @@ struct DataManagementView: View {
     @StateObject private var syncService: SyncService
     
     @State private var loadedPeriods: Set<Int> = []
-    @State private var selectedYear = Calendar.current.component(.year, from: Date())
     
-    let years = Array((2015...Calendar.current.component(.year, from: Date())).reversed())
-    let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    private let years = Array((2015...Calendar.current.component(.year, from: Date())).reversed())
+    private let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    
+    private let currentYear = Calendar.current.component(.year, from: Date())
+    private let currentMonth = Calendar.current.component(.month, from: Date())
     
     init(dataStore: DataStore, isMenuOpen: Binding<Bool>) {
         self.dataStore = dataStore
@@ -22,77 +24,18 @@ struct DataManagementView: View {
             AppColors.background.ignoresSafeArea()
             
             VStack(spacing: 0) {
-                headerView
+                PageHeader(title: "Data Management", subtitle: "CMS Records Catalog", isMenuOpen: $isMenuOpen)
                 
                 ScrollView {
-                    VStack(spacing: 24) {
-                        yearSelector
-                        
-                        // Landscape Section
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("ANNUAL LANDSCAPE")
-                                .font(.system(size: 11, weight: .black))
-                                .foregroundColor(.blue)
-                                .kerning(1.2)
-                                .padding(.horizontal)
-                            
-                            ModernCard {
-                                HStack {
-                                    VStack(alignment: .leading) {
-                                        Text("\(String(format: "%d", selectedYear)) Plan Landscape")
-                                            .font(.headline)
-                                            .foregroundColor(.white)
-                                        Text("Benefits, Premiums, & Copays")
-                                            .font(.caption)
-                                            .foregroundColor(.gray)
-                                    }
-                                    Spacer()
-                                    statusIcon(for: selectedYear, month: nil)
-                                }
-                            }
-                            .onTapGesture {
-                                handleAction(year: selectedYear, month: nil)
-                            }
-                            .padding(.horizontal)
-                        }
-                        
-                        // Monthly CPSC Section
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("MONTHLY ENROLLMENT (CPSC)")
-                                .font(.system(size: 11, weight: .black))
-                                .foregroundColor(.blue)
-                                .kerning(1.2)
-                                .padding(.horizontal)
-                            
-                            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
-                                ForEach(1...12, id: \.self) { month in
-                                    ModernCard {
-                                        VStack(alignment: .leading, spacing: 8) {
-                                            HStack {
-                                                Text(months[month-1])
-                                                    .font(.headline)
-                                                    .foregroundColor(.white)
-                                                Spacer()
-                                                statusIcon(for: selectedYear, month: month)
-                                            }
-                                            Text("Contract/Plan data")
-                                                .font(.system(size: 10))
-                                                .foregroundColor(.gray)
-                                        }
-                                    }
-                                    .onTapGesture {
-                                        handleAction(year: selectedYear, month: month)
-                                    }
-                                }
-                            }
-                            .padding(.horizontal)
+                    LazyVStack(spacing: 40, pinnedViews: [.sectionHeaders]) {
+                        ForEach(years, id: \.self) { year in
+                            yearSection(year: year)
                         }
                     }
                     .padding(.vertical, 24)
                     .padding(.bottom, 60)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             
             if syncService.isSyncing {
                 ZStack {
@@ -105,7 +48,7 @@ struct DataManagementView: View {
                                 .foregroundColor(.white)
                                 .multilineTextAlignment(.center)
                         }
-                        .frame(width: 220)
+                        .frame(width: 240)
                     }
                 }
             }
@@ -113,49 +56,113 @@ struct DataManagementView: View {
         .onAppear { refreshStatus() }
     }
     
-    var headerView: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Button(action: { withAnimation(.spring()) { isMenuOpen = true } }) {
-                    ZStack {
-                        Circle().fill(AppColors.surface).frame(width: 40, height: 40)
-                        Image(systemName: "line.3.horizontal")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundColor(.white)
+    func yearSection(year: Int) -> some View {
+        Section {
+            VStack(spacing: 24) {
+                // Annual Landscape
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("ANNUAL LANDSCAPE")
+                        .font(.system(size: 11, weight: .black))
+                        .foregroundColor(.blue.opacity(0.7))
+                        .kerning(1.2)
+                        .padding(.horizontal)
+                    
+                    ModernCard {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("\(String(year)) Plan Landscape")
+                                    .font(.headline)
+                                    .foregroundColor(.white)
+                                Text("Benefits, Premiums, & Copays")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                            }
+                            Spacer()
+                            statusIcon(for: year, month: nil)
+                        }
                     }
+                    .onTapGesture { handleAction(year: year, month: nil) }
+                    .padding(.horizontal)
                 }
-                Spacer()
-                Text("Data Management")
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
-                Spacer()
-                Color.clear.frame(width: 40)
+                
+                // Monthly Grid
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("MONTHLY ENROLLMENT (CPSC)")
+                        .font(.system(size: 11, weight: .black))
+                        .foregroundColor(.blue.opacity(0.7))
+                        .kerning(1.2)
+                        .padding(.horizontal)
+                    
+                    let columns = [
+                        GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible()),
+                        GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())
+                    ]
+                    
+                    LazyVGrid(columns: UIDevice.current.userInterfaceIdiom == .pad ? columns : [GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
+                        ForEach(1...12, id: \.self) { month in
+                            let isFuture = year == currentYear && month > currentMonth
+                            
+                            ModernCard {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack {
+                                        Text(months[month-1])
+                                            .font(.headline)
+                                            .foregroundColor(isFuture ? .gray : .white)
+                                        Spacer()
+                                        if !isFuture {
+                                            statusIcon(for: year, month: month)
+                                        }
+                                    }
+                                    Text("Contract/Plan data")
+                                        .font(.system(size: 10))
+                                        .foregroundColor(.gray)
+                                }
+                            }
+                            .opacity(isFuture ? 0.4 : 1.0)
+                            .onTapGesture {
+                                if !isFuture { handleAction(year: year, month: month) }
+                            }
+                        }
+                    }
+                    .padding(.horizontal)
+                }
             }
-            .padding(.horizontal)
-            .frame(height: 64)
-            .background(AppColors.background.opacity(0.95))
-            
-            Divider().background(Color.white.opacity(0.1))
+            .padding(.bottom, 20)
+        } header: {
+            yearHeader(year: year)
         }
     }
     
-    var yearSelector: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
-                ForEach(years, id: \.self) { year in
-                    Button(action: { selectedYear = year }) {
-                        Text(String(format: "%d", year))
-                            .font(.system(size: 14, weight: .bold))
-                            .padding(.vertical, 8)
-                            .padding(.horizontal, 16)
-                            .background(selectedYear == year ? Color.blue : AppColors.surface)
-                            .foregroundColor(.white)
-                            .cornerRadius(12)
-                    }
+    func yearHeader(year: Int) -> some View {
+        HStack {
+            Text(String(year))
+                .font(.system(size: 28, weight: .black, design: .rounded))
+                .foregroundColor(.white)
+            
+            Spacer()
+            
+            Button(action: {
+                Task {
+                    await syncService.syncEntireYear(year: year)
+                    refreshStatus()
                 }
+            }) {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.down.circle.fill")
+                    Text("Load Entire Year")
+                }
+                .font(.system(size: 14, weight: .bold))
+                .padding(.vertical, 8)
+                .padding(.horizontal, 16)
+                .background(Color.blue)
+                .foregroundColor(.white)
+                .cornerRadius(12)
             }
-            .padding(.horizontal)
+            .disabled(syncService.isSyncing)
         }
+        .padding(.horizontal)
+        .padding(.vertical, 16)
+        .background(AppColors.background.opacity(0.9))
     }
     
     @ViewBuilder

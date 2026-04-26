@@ -149,4 +149,19 @@ final class SyncService: ObservableObject {
             await MainActor.run { isSyncing = false }
         }
     }
+    
+    func syncEntireYear(year: Int) async {
+        let now = Date()
+        let calendar = Calendar.current
+        let currentYear = calendar.component(.year, from: now)
+        let currentMonth = calendar.component(.month, from: now)
+        
+        let maxMonth = (year == currentYear) ? currentMonth : 12
+        
+        for m in 1...maxMonth {
+            await syncSpecific(year: year, month: m)
+            // Small pause between months to avoid overwhelming the server/local IO
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        }
+    }
 }
