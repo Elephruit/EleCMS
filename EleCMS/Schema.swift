@@ -106,12 +106,13 @@ struct DBSchema {
     """
 
     static let mergeStagingToFinal: String = """
-    -- 1. Sync Carriers
+    -- 1. Sync Carriers (Consolidate into Parent Organization)
     INSERT OR IGNORE INTO carrier_dim (name)
-    SELECT DISTINCT COALESCE(organization_marketing_name, organization_name) 
-    FROM staging_contracts WHERE organization_name IS NOT NULL;
+    SELECT DISTINCT TRIM(parent_organization)
+    FROM staging_contracts 
+    WHERE parent_organization IS NOT NULL AND parent_organization != '';
 
-    -- 2. Sync Counties (Ensure we have all counties found in enrollment)
+    -- 2. Sync Counties
     INSERT OR IGNORE INTO county_dim (name, state, ssa_county_code, fips_county_code)
     SELECT DISTINCT
         COALESCE(county, ''),
@@ -120,14 +121,14 @@ struct DBSchema {
         COALESCE(fips_county_code, '')
     FROM staging_enrollment;
 
-    -- 3. Sync Plans from both files to ensure nothing is dropped
+    -- 3. Sync Plans from both files
     INSERT OR IGNORE INTO plan_dim (cms_plan_id, contract_id)
     SELECT DISTINCT plan_id, contract_id FROM staging_contracts;
 
     INSERT OR IGNORE INTO plan_dim (cms_plan_id, contract_id)
     SELECT DISTINCT plan_id, contract_id FROM staging_enrollment;
 
-    -- 4. Update Plans with details from staging_contracts (Safe UPDATE instead of REPLACE)
+    -- 4. Update Plans with details and strict Parent-Org Carrier Mapping
     UPDATE plan_dim
     SET 
         name = (SELECT sc.plan_name FROM staging_contracts sc WHERE sc.plan_id = plan_dim.cms_plan_id AND sc.contract_id = plan_dim.contract_id),
@@ -135,7 +136,7 @@ struct DBSchema {
         carrier_id = (
             SELECT c.carrier_id 
             FROM staging_contracts sc 
-            JOIN carrier_dim c ON c.name = COALESCE(sc.organization_marketing_name, sc.organization_name)
+            JOIN carrier_dim c ON c.name = TRIM(sc.parent_organization)
             WHERE sc.plan_id = plan_dim.cms_plan_id AND sc.contract_id = plan_dim.contract_id
         ),
         is_snp = (
@@ -148,7 +149,7 @@ struct DBSchema {
         )
     WHERE EXISTS (SELECT 1 FROM staging_contracts sc WHERE sc.plan_id = plan_dim.cms_plan_id AND sc.contract_id = plan_dim.contract_id);
 
-    -- 5. Insert enrollment records (Filter '*' here too for safety)
+    -- 5. Insert enrollment records
     INSERT OR REPLACE INTO enrollment_records (plan_id, county_id, period_id, enrollment)
     SELECT 
         p.plan_id,
@@ -168,14 +169,7 @@ struct DBSchema {
     """
 
     static let mergeLandscapeToFinal: String = """
-    -- Insert new carriers from landscape
-    INSERT OR IGNORE INTO carrier_dim (name)
-    SELECT DISTINCT carrier_name FROM staging_landscape WHERE carrier_name IS NOT NULL;
-
-    -- Update plans with landscape details
-    INSERT OR IGNORE INTO plan_dim (cms_plan_id, contract_id)
-    SELECT DISTINCT plan_id, contract_id FROM staging_landscape;
-
+    -- Update snp_type for plans from landscape data
     UPDATE plan_dim SET
         snp_type = (SELECT sl.snp_type FROM staging_landscape sl WHERE sl.plan_id = plan_dim.cms_plan_id AND sl.contract_id = plan_dim.contract_id),
         is_snp = 1

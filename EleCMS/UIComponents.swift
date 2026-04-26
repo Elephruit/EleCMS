@@ -1,4 +1,5 @@
 import SwiftUI
+import Charts
 
 struct AppColors {
     static let background = Color(hex: "0A0A0B")
@@ -94,6 +95,186 @@ struct EnrollmentMetricCard: View {
             }
             .foregroundColor(diff >= 0 ? .green : .red)
         }
+    }
+}
+
+// MARK: - Reusable Charts
+
+struct MarketTrendChart: View {
+    let trendData: [TrendPoint]
+    @Binding var rawSelectedDate: Date?
+    let chartDomain: ClosedRange<Int>
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            CustomSectionHeader(title: "Enrollment Trend")
+            
+            ModernCard {
+                VStack(alignment: .leading, spacing: 12) {
+                    Chart {
+                        ForEach(trendData) { point in
+                            LineMark(x: .value("Date", point.date), y: .value("Enrollment", point.enrollment))
+                                .foregroundStyle(LinearGradient(colors: [.blue, .purple], startPoint: .leading, endPoint: .trailing))
+                                .interpolationMethod(.catmullRom)
+                                .lineStyle(StrokeStyle(lineWidth: 3))
+                            
+                            PointMark(x: .value("Date", point.date), y: .value("Enrollment", point.enrollment))
+                                .foregroundStyle(LinearGradient(colors: [.blue, .purple], startPoint: .leading, endPoint: .trailing))
+                                .symbolSize(30)
+                            
+                            if let snapped = snappedDate, Calendar.current.isDate(point.date, inSameDayAs: snapped) {
+                                RuleMark(x: .value("Date", snapped))
+                                    .foregroundStyle(Color.white.opacity(0.5))
+                                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [5]))
+                                PointMark(x: .value("Date", snapped), y: .value("Enrollment", point.enrollment))
+                                    .foregroundStyle(.white)
+                                    .symbolSize(80)
+                            }
+                        }
+                    }
+                    .chartYScale(domain: chartDomain)
+                    .chartXSelection(value: $rawSelectedDate)
+                    .chartYAxis {
+                        AxisMarks { value in
+                            AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5)).foregroundStyle(Color.white.opacity(0.1))
+                            AxisValueLabel { if let intVal = value.as(Int.self) { Text(UIFormatter.compactFormat(intVal)) } }
+                        }
+                    }
+                    .frame(height: 220)
+                    .overlay(alignment: .topTrailing) {
+                        if let snapped = snappedDate, let point = trendData.first(where: { Calendar.current.isDate($0.date, inSameDayAs: snapped) }) {
+                            ChartTooltip(date: snapped, label: "Market Volume", value: point.enrollment)
+                                .offset(x: -10, y: 10)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    private var snappedDate: Date? {
+        guard let raw = rawSelectedDate else { return nil }
+        return trendData.min(by: { abs($0.date.timeIntervalSince(raw)) < abs($1.date.timeIntervalSince(raw)) })?.date
+    }
+}
+
+struct CarrierComparisonChart: View {
+    let carrierTrendData: [CarrierTrendPoint]
+    let top5CarrierNames: [String]
+    @Binding var rawCarrierSelectedDate: Date?
+    
+    private let chartColors: [Color] = [
+        Color(hex: "3B82F6"), // Electric Blue
+        Color(hex: "06B6D4"), // Vivid Cyan
+        Color(hex: "F59E0B"), // Amber / Gold
+        Color(hex: "EC4899"), // Magenta / Pink
+        Color(hex: "10B981")  // Emerald Green
+    ]
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            CustomSectionHeader(title: "Carrier Comparison")
+            
+            ModernCard {
+                VStack(alignment: .leading, spacing: 12) {
+                    Chart {
+                        ForEach(carrierTrendData) { point in
+                            LineMark(
+                                x: .value("Date", point.date),
+                                y: .value("Enrollment", point.enrollment)
+                            )
+                            .foregroundStyle(by: .value("Carrier", point.carrier))
+                            .interpolationMethod(.catmullRom)
+                            .lineStyle(StrokeStyle(lineWidth: 2.5))
+                            
+                            PointMark(
+                                x: .value("Date", point.date),
+                                y: .value("Enrollment", point.enrollment)
+                            )
+                            .foregroundStyle(by: .value("Carrier", point.carrier))
+                            .symbolSize(20)
+                            
+                            if let snapped = snappedCarrierDate, Calendar.current.isDate(point.date, inSameDayAs: snapped) {
+                                RuleMark(x: .value("Date", snapped))
+                                    .foregroundStyle(Color.white.opacity(0.3))
+                                PointMark(x: .value("Date", snapped), y: .value("Enrollment", point.enrollment))
+                                    .foregroundStyle(by: .value("Carrier", point.carrier))
+                                    .symbolSize(60)
+                            }
+                        }
+                    }
+                    .chartYScale(domain: .automatic(includesZero: false))
+                    .chartXSelection(value: $rawCarrierSelectedDate)
+                    .chartYAxis {
+                        AxisMarks { value in
+                            AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5)).foregroundStyle(Color.white.opacity(0.1))
+                            AxisValueLabel { if let intVal = value.as(Int.self) { Text(UIFormatter.compactFormat(intVal)) } }
+                        }
+                    }
+                    .chartForegroundStyleScale(domain: top5CarrierNames, range: chartColors)
+                    .chartLegend(position: .bottom, alignment: .center)
+                    .frame(height: 220)
+                    .overlay(alignment: .topTrailing) {
+                        if let snapped = snappedCarrierDate {
+                            let points = carrierTrendData.filter { Calendar.current.isDate($0.date, inSameDayAs: snapped) }
+                            CarrierLeaderboardTooltip(date: snapped, points: points, colors: carrierColorMap)
+                                .offset(x: -10, y: 10)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    private var snappedCarrierDate: Date? {
+        guard let raw = rawCarrierSelectedDate else { return nil }
+        return carrierTrendData.min(by: { abs($0.date.timeIntervalSince(raw)) < abs($1.date.timeIntervalSince(raw)) })?.date
+    }
+    
+    private var carrierColorMap: [String: Color] {
+        var map: [String: Color] = [:]
+        for (index, name) in top5CarrierNames.enumerated() {
+            map[name] = chartColors[index % chartColors.count]
+        }
+        return map
+    }
+}
+
+struct ChartTooltip: View {
+    let date: Date
+    let label: String
+    let value: Int
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(date, format: .dateTime.month().year()).font(.system(size: 10, weight: .bold)).foregroundColor(.gray)
+            Text(label).font(.system(size: 10)).foregroundColor(.white.opacity(0.7))
+            Text(UIFormatter.formatNumber(value)).font(.system(size: 14, weight: .black, design: .rounded)).foregroundColor(.white)
+        }
+        .padding(10).background(RoundedRectangle(cornerRadius: 12).fill(Color(hex: "1C1C1E")).shadow(color: .black.opacity(0.5), radius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.1), lineWidth: 1))
+    }
+}
+
+struct CarrierLeaderboardTooltip: View {
+    let date: Date
+    let points: [CarrierTrendPoint]
+    let colors: [String: Color]
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(date, format: .dateTime.month().year()).font(.system(size: 10, weight: .bold)).foregroundColor(.gray)
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(points.sorted(by: { $0.enrollment > $1.enrollment })) { p in
+                    HStack(spacing: 6) {
+                        Circle().fill(colors[p.carrier] ?? .gray).frame(width: 6, height: 6)
+                        Text(p.carrier.prefix(12)).font(.system(size: 9)).foregroundColor(.white.opacity(0.8))
+                        Spacer()
+                        Text(UIFormatter.compactFormat(p.enrollment)).font(.system(size: 9, weight: .bold)).foregroundColor(.white)
+                    }
+                }
+            }
+        }
+        .padding(10).frame(width: 160).background(RoundedRectangle(cornerRadius: 12).fill(Color(hex: "1C1C1E")).shadow(color: .black.opacity(0.5), radius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.1), lineWidth: 1))
     }
 }
 
@@ -313,9 +494,13 @@ struct UIFormatter {
     
     static func compactFormat(_ n: Int) -> String {
         let num = Double(n)
-        if num >= 1_000_000 { return String(format: "%.1fM", num / 1_000_000) }
-        if num >= 1_000 { return String(format: "%.1fK", num / 1_000) }
-        return "\(n)"
+        let isNegative = num < 0
+        let absNum = abs(num)
+        var result = ""
+        if absNum >= 1_000_000 { result = String(format: "%.1fM", absNum / 1_000_000) }
+        else if absNum >= 1_000 { result = String(format: "%.1fK", absNum / 1_000) }
+        else { result = "\(Int(absNum))" }
+        return (isNegative ? "-" : "") + result
     }
     
     static func growthString(current: Int, prior: Int?) -> String {
