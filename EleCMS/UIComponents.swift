@@ -39,36 +39,43 @@ struct EnrollmentMetricCard: View {
     var momPct: Double? = nil
     var ytdDiff: Int? = nil
     var ytdPct: Double? = nil
+    var isSelected: Bool = false
     
     var body: some View {
-        ModernCard {
-            VStack(alignment: .leading, spacing: 8) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title.uppercased())
-                        .font(.system(size: 8, weight: .black))
-                        .foregroundColor(.blue.opacity(0.8))
-                        .kerning(0.5)
-                        .lineLimit(1)
-                    Text(UIFormatter.formatNumber(enrollment))
-                        .font(.system(size: 14, weight: .black, design: .rounded))
-                        .foregroundColor(.white)
-                        .minimumScaleFactor(0.5)
-                        .lineLimit(1)
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title.uppercased())
+                    .font(.system(size: 8, weight: .black))
+                    .foregroundColor(isSelected ? .white : .blue.opacity(0.8))
+                    .kerning(0.5)
+                    .lineLimit(1)
+                Text(UIFormatter.formatNumber(enrollment))
+                    .font(.system(size: 14, weight: .black, design: .rounded))
+                    .foregroundColor(.white)
+                    .minimumScaleFactor(0.5)
+                    .lineLimit(1)
+            }
+            
+            VStack(alignment: .leading, spacing: 4) {
+                if let diff = momDiff, let pct = momPct {
+                    growthMiniMetric(label: "MoM", diff: diff, pct: pct)
                 }
-                
-                VStack(alignment: .leading, spacing: 4) {
-                    if let diff = momDiff, let pct = momPct {
-                        growthMiniMetric(label: "MoM", diff: diff, pct: pct)
-                    }
-                    if let diff = ytdDiff, let pct = ytdPct {
-                        growthMiniMetric(label: "YTD", diff: diff, pct: pct)
-                    }
+                if let diff = ytdDiff, let pct = ytdPct {
+                    growthMiniMetric(label: "YTD", diff: diff, pct: pct)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, -4) // Tighten vertical space
-            .padding(.horizontal, -4) // Tighten horizontal space
         }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(isSelected ? Color.blue.opacity(0.15) : AppColors.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(isSelected ? Color.blue : Color.white.opacity(0.05), lineWidth: isSelected ? 2 : 1)
+        )
+        .shadow(color: isSelected ? Color.blue.opacity(0.3) : Color.clear, radius: 10, x: 0, y: 0)
     }
     
     func growthMiniMetric(label: String, diff: Int, pct: Double) -> some View {

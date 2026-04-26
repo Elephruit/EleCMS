@@ -23,6 +23,7 @@ struct DashboardView: View {
     
     @State private var isFilterPresented = false
     @State private var filter = DashboardFilter()
+    @State private var selectedSegment: MarketSegment = .total
     
     @State private var availableStates: [String] = []
     @State private var availablePlanTypes: [String] = []
@@ -126,21 +127,21 @@ struct DashboardView: View {
     
     var dashboardContent: some View {
         VStack(alignment: .leading, spacing: 32) {
-            // Static Highlights (Fit to width)
+            // Static Highlights (Clickable for focus)
             HStack(spacing: 8) {
-                highlightCard(title: "Market", stats: totalMarket)
-                highlightCard(title: "SNP", stats: snpMarket)
-                highlightCard(title: "EGWP (non-PDP)", stats: egwpMarket)
-                highlightCard(title: "Individual non-SNP", stats: individualNonSNPMarket)
-                highlightCard(title: "PDP Group", stats: pdpEGWPMarket)
-                highlightCard(title: "PDP Individual", stats: pdpIndividualMarket)
+                segmentCard(title: "Market", stats: totalMarket, segment: .total)
+                segmentCard(title: "SNP", stats: snpMarket, segment: .snp)
+                segmentCard(title: "EGWP (non-PDP)", stats: egwpMarket, segment: .egwpNonPDP)
+                segmentCard(title: "Indiv non-SNP", stats: individualNonSNPMarket, segment: .individualNonSNP)
+                segmentCard(title: "PDP Group", stats: pdpEGWPMarket, segment: .pdpGroup)
+                segmentCard(title: "PDP Indiv", stats: pdpIndividualMarket, segment: .pdpIndividual)
             }
             .padding(.horizontal)
             
             // Interactive Chart
             if trendData.count > 1 {
                 VStack(alignment: .leading, spacing: 16) {
-                    CustomSectionHeader(title: "Growth Trend")
+                    CustomSectionHeader(title: "\(selectedSegment.rawValue) Growth Trend")
                     
                     ModernCard {
                         VStack(alignment: .leading, spacing: 12) {
@@ -189,7 +190,7 @@ struct DashboardView: View {
             
             // Carrier List
             VStack(alignment: .leading, spacing: 16) {
-                CustomSectionHeader(title: "Carrier Market Share", subtitle: "\(UIFormatter.formatNumber(totalMarket.enrollment)) Total")
+                CustomSectionHeader(title: "\(selectedSegment.rawValue) Market Share", subtitle: "\(UIFormatter.formatNumber(currentSegmentEnrollment)) Total")
                 
                 VStack(spacing: 12) {
                     let maxEnroll = carrierEnrollments.map { $0.enrollment }.max() ?? 1
@@ -201,7 +202,7 @@ struct DashboardView: View {
                                     Spacer()
                                     VStack(alignment: .trailing) {
                                         Text(UIFormatter.compactFormat(item.enrollment)).font(.system(size: 15, weight: .black, design: .rounded)).foregroundColor(.white)
-                                        Text(String(format: "%.1f%%", totalMarket.enrollment > 0 ? Double(item.enrollment) / Double(totalMarket.enrollment) * 100 : 0)).font(.system(size: 9, weight: .bold)).foregroundColor(.gray)
+                                        Text(String(format: "%.1f%%", currentSegmentEnrollment > 0 ? Double(item.enrollment) / Double(currentSegmentEnrollment) * 100 : 0)).font(.system(size: 9, weight: .bold)).foregroundColor(.gray)
                                     }
                                 }
                                 GeometryReader { geo in
@@ -220,15 +221,33 @@ struct DashboardView: View {
         }
     }
     
-    func highlightCard(title: String, stats: SegmentStats) -> some View {
+    var currentSegmentEnrollment: Int {
+        switch selectedSegment {
+        case .total: return totalMarket.enrollment
+        case .snp: return snpMarket.enrollment
+        case .egwpNonPDP: return egwpMarket.enrollment
+        case .individualNonSNP: return individualNonSNPMarket.enrollment
+        case .pdpGroup: return pdpEGWPMarket.enrollment
+        case .pdpIndividual: return pdpIndividualMarket.enrollment
+        }
+    }
+    
+    func segmentCard(title: String, stats: SegmentStats, segment: MarketSegment) -> some View {
         EnrollmentMetricCard(
             title: title,
             enrollment: stats.enrollment,
             momDiff: stats.momDiff,
             momPct: stats.momPct,
             ytdDiff: stats.ytdDiff,
-            ytdPct: stats.ytdPct
+            ytdPct: stats.ytdPct,
+            isSelected: selectedSegment == segment
         )
+        .onTapGesture {
+            withAnimation(.spring()) {
+                selectedSegment = segment
+                fetchData()
+            }
+        }
     }
     
     var chartDomain: ClosedRange<Int> {
@@ -306,28 +325,33 @@ struct DashboardView: View {
                 if filter.egwp == "Yes" { conds.append("p.is_egwp = 1") }
                 else if filter.egwp == "No" { conds.append("p.is_egwp = 0") }
                 
-                let whereAnd = conds.isEmpty ? "" : " AND " + conds.joined(separator: " AND ")
+                let andClause = conds.isEmpty ? "" : " AND " + conds.joined(separator: " AND ")
                 let whereClause = conds.isEmpty ? "" : " WHERE " + conds.joined(separator: " AND ")
                 
+                // Active focus filter (from selected tile)
+                let focusFilter = selectedSegment.sqlFilter
+                let wherePeriodFocus = " WHERE e.period_id = \(period.id)" + andClause + focusFilter
+                let whereTrendFocus = whereClause.isEmpty ? " WHERE 1=1 \(focusFilter)" : whereClause + focusFilter
+
                 // Segments Definition
                 let segments = [
-                    (name: "Total", filter: ""),
-                    (name: "SNP", filter: " AND p.is_snp = 1"),
-                    (name: "EGWP", filter: " AND p.is_egwp = 1 AND p.type NOT IN ('Medicare Prescription Drug Plan', 'Employer/Union Only Direct Contract PDP')"),
-                    (name: "IndivNonSNP", filter: " AND p.is_egwp = 0 AND p.is_snp = 0 AND p.type NOT IN ('Medicare Prescription Drug Plan', 'Medicare-Medicaid Plan HMO/HMOPOS', 'Employer/Union Only Direct Contract PDP')"),
-                    (name: "PDP_EGWP", filter: " AND p.is_egwp = 1 AND p.type IN ('Employer/Union Only Direct Contract PDP', 'Medicare Prescription Drug Plan')"),
-                    (name: "PDP_Indiv", filter: " AND p.is_egwp = 0 AND p.type = 'Medicare Prescription Drug Plan'")
+                    (name: "Total", segment: MarketSegment.total),
+                    (name: "SNP", segment: MarketSegment.snp),
+                    (name: "EGWP", segment: MarketSegment.egwpNonPDP),
+                    (name: "IndivNonSNP", segment: MarketSegment.individualNonSNP),
+                    (name: "PDP_EGWP", segment: MarketSegment.pdpGroup),
+                    (name: "PDP_Indiv", segment: MarketSegment.pdpIndividual)
                 ]
                 
-                var results: [String: SegmentStats] = [:]
-                
+                var segmentResults: [String: SegmentStats] = [:]
                 let pm = period.month == 1 ? 12 : period.month - 1
                 let py = period.month == 1 ? period.year - 1 : period.year
                 
                 for seg in segments {
-                    let curSQL = "SELECT SUM(e.enrollment) as total FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN county_dim co ON co.county_id = e.county_id WHERE e.period_id = \(period.id) \(whereAnd) \(seg.filter)"
-                    let pmSQL = "SELECT SUM(e.enrollment) as total FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN county_dim co ON co.county_id = e.county_id JOIN periods pe ON e.period_id = pe.period_id WHERE pe.year = \(py) AND pe.month = \(pm) \(whereAnd) \(seg.filter)"
-                    let pdSQL = "SELECT SUM(e.enrollment) as total FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN county_dim co ON co.county_id = e.county_id JOIN periods pe ON e.period_id = pe.period_id WHERE pe.year = \(period.year - 1) AND pe.month = 12 \(whereAnd) \(seg.filter)"
+                    let sFilter = seg.segment.sqlFilter
+                    let curSQL = "SELECT SUM(e.enrollment) as total FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN county_dim co ON co.county_id = e.county_id WHERE e.period_id = \(period.id) \(andClause) \(sFilter)"
+                    let pmSQL = "SELECT SUM(e.enrollment) as total FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN county_dim co ON co.county_id = e.county_id JOIN periods pe ON e.period_id = pe.period_id WHERE pe.year = \(py) AND pe.month = \(pm) \(andClause) \(sFilter)"
+                    let pdSQL = "SELECT SUM(e.enrollment) as total FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN county_dim co ON co.county_id = e.county_id JOIN periods pe ON e.period_id = pe.period_id WHERE pe.year = \(period.year - 1) AND pe.month = 12 \(andClause) \(sFilter)"
                     
                     let curT = (try dataStore.database.query(sql: curSQL)).first?["total"] as? Int ?? 0
                     let pmT = (try dataStore.database.query(sql: pmSQL)).first?["total"] as? Int ?? 0
@@ -339,25 +363,26 @@ struct DashboardView: View {
                     stats.momPct = pmT > 0 ? (Double(stats.momDiff) / Double(pmT)) * 100.0 : 0
                     stats.ytdDiff = curT - pdT
                     stats.ytdPct = pdT > 0 ? (Double(stats.ytdDiff) / Double(pdT)) * 100.0 : 0
-                    results[seg.name] = stats
+                    segmentResults[seg.name] = stats
                 }
 
-                let trendRows = try dataStore.database.query(sql: "SELECT pe.year, pe.month, SUM(e.enrollment) as total FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN county_dim co ON co.county_id = e.county_id JOIN periods pe ON e.period_id = pe.period_id \(whereClause) GROUP BY pe.period_id, pe.year, pe.month ORDER BY pe.year ASC, pe.month ASC")
+                // Main Focus Queries
+                let trendRows = try dataStore.database.query(sql: "SELECT pe.year, pe.month, SUM(e.enrollment) as total FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN county_dim co ON co.county_id = e.county_id JOIN periods pe ON e.period_id = pe.period_id \(whereTrendFocus) GROUP BY pe.period_id, pe.year, pe.month ORDER BY pe.year ASC, pe.month ASC")
                 let trend = trendRows.map { TrendPoint(year: $0["year"] as? Int ?? 0, month: $0["month"] as? Int ?? 0, enrollment: $0["total"] as? Int ?? 0) }
 
-                let carrierRows = try dataStore.database.query(sql: "SELECT c.name as carrier, SUM(e.enrollment) as total FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN carrier_dim c ON c.carrier_id = p.carrier_id JOIN county_dim co ON co.county_id = e.county_id WHERE e.period_id = \(period.id) \(whereAnd) GROUP BY c.carrier_id ORDER BY total DESC LIMIT 20")
+                let carrierRows = try dataStore.database.query(sql: "SELECT c.name as carrier, SUM(e.enrollment) as total FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN carrier_dim c ON c.carrier_id = p.carrier_id JOIN county_dim co ON co.county_id = e.county_id \(wherePeriodFocus) GROUP BY c.carrier_id ORDER BY total DESC LIMIT 20")
                 let carriers = carrierRows.map { EnrollmentByCarrier(carrier: $0["carrier"] as? String ?? "Unknown", enrollment: $0["total"] as? Int ?? 0) }
                 
-                let countyRows = try dataStore.database.query(sql: "SELECT co.name as county, p.name as plan, e.enrollment FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN county_dim co ON co.county_id = e.county_id WHERE e.period_id = \(period.id) \(whereAnd) ORDER BY e.enrollment DESC LIMIT 50")
+                let countyRows = try dataStore.database.query(sql: "SELECT co.name as county, p.name as plan, e.enrollment FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN county_dim co ON co.county_id = e.county_id \(wherePeriodFocus) ORDER BY e.enrollment DESC LIMIT 50")
                 let counties = countyRows.map { EnrollmentByCountyByPlan(county: $0["county"] as? String ?? "Unknown", plan: $0["plan"] as? String ?? "Unknown", enrollment: $0["enrollment"] as? Int ?? 0) }
                 
                 await MainActor.run {
-                    self.totalMarket = results["Total"] ?? .empty
-                    self.snpMarket = results["SNP"] ?? .empty
-                    self.egwpMarket = results["EGWP"] ?? .empty
-                    self.individualNonSNPMarket = results["IndivNonSNP"] ?? .empty
-                    self.pdpEGWPMarket = results["PDP_EGWP"] ?? .empty
-                    self.pdpIndividualMarket = results["PDP_Indiv"] ?? .empty
+                    self.totalMarket = segmentResults["Total"] ?? .empty
+                    self.snpMarket = segmentResults["SNP"] ?? .empty
+                    self.egwpMarket = segmentResults["EGWP"] ?? .empty
+                    self.individualNonSNPMarket = segmentResults["IndivNonSNP"] ?? .empty
+                    self.pdpEGWPMarket = segmentResults["PDP_EGWP"] ?? .empty
+                    self.pdpIndividualMarket = segmentResults["PDP_Indiv"] ?? .empty
                     
                     self.trendData = trend; self.carrierEnrollments = carriers; self.countyEnrollments = counties
                     self.isLoading = false

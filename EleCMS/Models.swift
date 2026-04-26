@@ -55,3 +55,25 @@ struct DashboardFilter: Equatable {
     var csnp: Bool = false
     var isnp: Bool = false
 }
+
+enum MarketSegment: String, CaseIterable, Identifiable {
+    var id: String { self.rawValue }
+    
+    case total = "Market"
+    case snp = "SNP"
+    case egwpNonPDP = "EGWP (non-PDP)"
+    case individualNonSNP = "Individual non-SNP"
+    case pdpGroup = "PDP Group"
+    case pdpIndividual = "PDP Individual"
+    
+    var sqlFilter: String {
+        switch self {
+        case .total: return ""
+        case .snp: return " AND p.is_snp = 1"
+        case .egwpNonPDP: return " AND p.is_egwp = 1 AND p.type NOT IN ('Medicare Prescription Drug Plan', 'Employer/Union Only Direct Contract PDP')"
+        case .individualNonSNP: return " AND p.is_egwp = 0 AND p.is_snp = 0 AND p.type NOT IN ('Medicare Prescription Drug Plan', 'Medicare-Medicaid Plan HMO/HMOPOS', 'Employer/Union Only Direct Contract PDP')"
+        case .pdpGroup: return " AND p.is_egwp = 1 AND p.type IN ('Employer/Union Only Direct Contract PDP', 'Medicare Prescription Drug Plan')"
+        case .pdpIndividual: return " AND p.is_egwp = 0 AND p.type = 'Medicare Prescription Drug Plan'"
+        }
+    }
+}
