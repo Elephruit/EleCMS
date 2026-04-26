@@ -26,6 +26,20 @@ struct TrendPoint: Identifiable {
     }
 }
 
+struct CarrierTrendPoint: Identifiable {
+    var id: String { "\(carrier)-\(year)-\(month)" }
+    let carrier: String
+    let year: Int
+    let month: Int
+    let enrollment: Int
+    var date: Date {
+        var components = DateComponents()
+        components.year = year
+        components.month = month
+        return Calendar.current.date(from: components) ?? Date()
+    }
+}
+
 struct Period: Identifiable, Hashable {
     let id: Int
     let year: Int
@@ -71,8 +85,8 @@ enum MarketSegment: String, CaseIterable, Identifiable {
         case .total: return ""
         case .snp: return " AND p.is_snp = 1"
         case .egwpNonPDP: return " AND p.is_egwp = 1 AND p.type NOT IN ('Medicare Prescription Drug Plan', 'Employer/Union Only Direct Contract PDP')"
-        case .individualNonSNP: return " AND p.is_egwp = 0 AND p.is_snp = 0 AND p.type NOT IN ('Medicare Prescription Drug Plan', 'Medicare-Medicaid Plan HMO/HMOPOS', 'Employer/Union Only Direct Contract PDP')"
-        case .pdpGroup: return " AND p.is_egwp = 1 AND p.type IN ('Employer/Union Only Direct Contract PDP', 'Medicare Prescription Drug Plan')"
+        case .individualNonSNP: return " AND p.is_egwp = 0 AND p.is_snp = 0 AND p.type NOT IN ('Medicare Prescription Drug Plan', 'Medicare-Medicaid Plan HMO/HMOPOS', 'Employer/Union only direct contract pdp')"
+        case .pdpGroup: return " AND p.is_egwp = 1 AND p.type IN ('Employer/Union only direct contract pdp', 'Medicare Prescription Drug Plan')"
         case .pdpIndividual: return " AND p.is_egwp = 0 AND p.type = 'Medicare Prescription Drug Plan'"
         }
     }

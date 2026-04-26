@@ -20,6 +20,8 @@ struct DashboardView: View {
     @State private var carrierEnrollments: [EnrollmentByCarrier] = []
     @State private var countyEnrollments: [EnrollmentByCountyByPlan] = []
     @State private var trendData: [TrendPoint] = []
+    @State private var carrierTrendData: [CarrierTrendPoint] = []
+    @State private var top5CarrierNames: [String] = []
     
     @State private var isFilterPresented = false
     @State private var filter = DashboardFilter()
@@ -27,7 +29,21 @@ struct DashboardView: View {
     
     @State private var availableStates: [String] = []
     @State private var availablePlanTypes: [String] = []
-    @State private var selectedDate: Date?
+    
+    // Chart Interactions
+    @State private var rawSelectedDate: Date?
+    @State private var rawCarrierSelectedDate: Date?
+    
+    private let haptic = UIImpactFeedbackGenerator(style: .light)
+    
+    // High-contrast dark-theme palette
+    private let chartColors: [Color] = [
+        Color(hex: "3B82F6"), // Electric Blue
+        Color(hex: "06B6D4"), // Vivid Cyan
+        Color(hex: "F59E0B"), // Amber / Gold
+        Color(hex: "EC4899"), // Magenta / Pink
+        Color(hex: "10B981")  // Emerald Green
+    ]
     
     struct SegmentStats {
         var enrollment: Int = 0
@@ -74,6 +90,7 @@ struct DashboardView: View {
                     .padding(.bottom, 60)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             
             if isFilterPresented {
                 FilterOverlay(
@@ -95,6 +112,8 @@ struct DashboardView: View {
             fetchPeriods()
             fetchFilterOptions()
         }
+        .onChange(of: snappedDate) { _, _ in haptic.impactOccurred() }
+        .onChange(of: snappedCarrierDate) { _, _ in haptic.impactOccurred() }
     }
     
     var filterActive: Bool {
@@ -127,36 +146,25 @@ struct DashboardView: View {
     
     var dashboardContent: some View {
         VStack(alignment: .leading, spacing: 32) {
-            // Static Highlights (Clickable for focus)
+            // Highlights
             HStack(spacing: 8) {
                 segmentCard(title: "Market", stats: totalMarket, segment: .total)
                 segmentCard(title: "SNP", stats: snpMarket, segment: .snp)
                 segmentCard(title: "EGWP (non-PDP)", stats: egwpMarket, segment: .egwpNonPDP)
-                segmentCard(title: "Indiv non-SNP", stats: individualNonSNPMarket, segment: .individualNonSNP)
+                segmentCard(title: "Individual non-SNP", stats: individualNonSNPMarket, segment: .individualNonSNP)
                 segmentCard(title: "PDP Group", stats: pdpEGWPMarket, segment: .pdpGroup)
-                segmentCard(title: "PDP Indiv", stats: pdpIndividualMarket, segment: .pdpIndividual)
+                segmentCard(title: "PDP Individual", stats: pdpIndividualMarket, segment: .pdpIndividual)
             }
             .padding(.horizontal)
             
-            // Interactive Chart
-            if trendData.count > 1 {
+            // Side-by-Side Trend Charts
+            HStack(alignment: .top, spacing: 16) {
+                // Left: Market Trend
                 VStack(alignment: .leading, spacing: 16) {
-                    CustomSectionHeader(title: "\(selectedSegment.rawValue) Growth Trend")
+                    CustomSectionHeader(title: "Enrollment Trend")
                     
                     ModernCard {
                         VStack(alignment: .leading, spacing: 12) {
-                            if let selectedDate = selectedDate, let point = trendData.first(where: { Calendar.current.isDate($0.date, inSameDayAs: selectedDate) }) {
-                                HStack {
-                                    VStack(alignment: .leading) {
-                                        Text(point.date, format: .dateTime.month().year()).font(.caption.bold()).foregroundColor(.blue)
-                                        Text(UIFormatter.formatNumber(point.enrollment)).font(.headline.bold()).foregroundColor(.white)
-                                    }
-                                    Spacer()
-                                }
-                            } else {
-                                Text("Slide to inspect history").font(.caption).foregroundColor(.gray)
-                            }
-                            
                             Chart {
                                 ForEach(trendData) { point in
                                     LineMark(x: .value("Date", point.date), y: .value("Enrollment", point.enrollment))
@@ -164,29 +172,96 @@ struct DashboardView: View {
                                         .interpolationMethod(.catmullRom)
                                         .lineStyle(StrokeStyle(lineWidth: 3))
                                     
-                                    if let selectedDate = selectedDate, Calendar.current.isDate(point.date, inSameDayAs: selectedDate) {
-                                        RuleMark(x: .value("Date", selectedDate))
+                                    PointMark(x: .value("Date", point.date), y: .value("Enrollment", point.enrollment))
+                                        .foregroundStyle(LinearGradient(colors: [.blue, .purple], startPoint: .leading, endPoint: .trailing))
+                                        .symbolSize(30)
+                                    
+                                    if let snapped = snappedDate, Calendar.current.isDate(point.date, inSameDayAs: snapped) {
+                                        RuleMark(x: .value("Date", snapped))
                                             .foregroundStyle(Color.white.opacity(0.5))
                                             .lineStyle(StrokeStyle(lineWidth: 1, dash: [5]))
-                                        PointMark(x: .value("Date", selectedDate), y: .value("Enrollment", point.enrollment))
-                                            .foregroundStyle(.blue).symbolSize(100)
+                                        PointMark(x: .value("Date", snapped), y: .value("Enrollment", point.enrollment))
+                                            .foregroundStyle(.white)
+                                            .symbolSize(80)
                                     }
                                 }
                             }
                             .chartYScale(domain: chartDomain)
-                            .chartXSelection(value: $selectedDate)
+                            .chartXSelection(value: $rawSelectedDate)
                             .chartYAxis {
                                 AxisMarks { value in
                                     AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5)).foregroundStyle(Color.white.opacity(0.1))
                                     AxisValueLabel { if let intVal = value.as(Int.self) { Text(UIFormatter.compactFormat(intVal)) } }
                                 }
                             }
-                            .frame(height: 180)
+                            .frame(height: 220)
+                            .overlay(alignment: .topTrailing) {
+                                if let snapped = snappedDate, let point = trendData.first(where: { Calendar.current.isDate($0.date, inSameDayAs: snapped) }) {
+                                    chartTooltip(date: snapped, label: "Market Volume", value: point.enrollment)
+                                        .offset(x: -10, y: 10)
+                                }
+                            }
                         }
                     }
-                    .padding(.horizontal)
                 }
+                .frame(maxWidth: .infinity)
+
+                // Right: Carrier Comparison
+                VStack(alignment: .leading, spacing: 16) {
+                    CustomSectionHeader(title: "Carrier Comparison")
+                    
+                    ModernCard {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Chart {
+                                ForEach(carrierTrendData) { point in
+                                    LineMark(
+                                        x: .value("Date", point.date),
+                                        y: .value("Enrollment", point.enrollment)
+                                    )
+                                    .foregroundStyle(by: .value("Carrier", point.carrier))
+                                    .interpolationMethod(.catmullRom)
+                                    .lineStyle(StrokeStyle(lineWidth: 2.5))
+                                    
+                                    PointMark(
+                                        x: .value("Date", point.date),
+                                        y: .value("Enrollment", point.enrollment)
+                                    )
+                                    .foregroundStyle(by: .value("Carrier", point.carrier))
+                                    .symbolSize(20)
+                                    
+                                    if let snapped = snappedCarrierDate, Calendar.current.isDate(point.date, inSameDayAs: snapped) {
+                                        RuleMark(x: .value("Date", snapped))
+                                            .foregroundStyle(Color.white.opacity(0.3))
+                                        PointMark(x: .value("Date", snapped), y: .value("Enrollment", point.enrollment))
+                                            .foregroundStyle(by: .value("Carrier", point.carrier))
+                                            .symbolSize(60)
+                                    }
+                                }
+                            }
+                            .chartYScale(domain: .automatic(includesZero: false))
+                            .chartXSelection(value: $rawCarrierSelectedDate)
+                            .chartYAxis {
+                                AxisMarks { value in
+                                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5)).foregroundStyle(Color.white.opacity(0.1))
+                                    AxisValueLabel { if let intVal = value.as(Int.self) { Text(UIFormatter.compactFormat(intVal)) } }
+                                }
+                            }
+                            .chartForegroundStyleScale(domain: top5CarrierNames, range: chartColors)
+                            .chartLegend(position: .bottom, alignment: .center)
+                            .frame(height: 220)
+                            .overlay(alignment: .topTrailing) {
+                                if let snapped = snappedCarrierDate {
+                                    let points = carrierTrendData.filter { Calendar.current.isDate($0.date, inSameDayAs: snapped) }
+                                    carrierTooltip(date: snapped, points: points)
+                                        .offset(x: -10, y: 10)
+                                }
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity)
             }
+            .padding(.horizontal)
             
             // Carrier List
             VStack(alignment: .leading, spacing: 16) {
@@ -219,6 +294,81 @@ struct DashboardView: View {
                 .padding(.horizontal)
             }
         }
+    }
+    
+    // MARK: - Tooltip Components
+    
+    func chartTooltip(date: Date, label: String, value: Int) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(date, format: .dateTime.month().year())
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(.gray)
+            Text(label)
+                .font(.system(size: 10))
+                .foregroundColor(.white.opacity(0.7))
+            Text(UIFormatter.formatNumber(value))
+                .font(.system(size: 14, weight: .black, design: .rounded))
+                .foregroundColor(.white)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(hex: "1C1C1E"))
+                .shadow(color: .black.opacity(0.5), radius: 10)
+        )
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.1), lineWidth: 1))
+    }
+    
+    func carrierTooltip(date: Date, points: [CarrierTrendPoint]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(date, format: .dateTime.month().year())
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(.gray)
+            
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(points.sorted(by: { $0.enrollment > $1.enrollment })) { p in
+                    HStack(spacing: 6) {
+                        Circle().fill(carrierColor(for: p.carrier)).frame(width: 6, height: 6)
+                        Text(p.carrier.prefix(12)).font(.system(size: 9)).foregroundColor(.white.opacity(0.8))
+                        Spacer()
+                        Text(UIFormatter.compactFormat(p.enrollment)).font(.system(size: 9, weight: .bold)).foregroundColor(.white)
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .frame(width: 160)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(hex: "1C1C1E"))
+                .shadow(color: .black.opacity(0.5), radius: 10)
+        )
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.1), lineWidth: 1))
+    }
+    
+    // MARK: - Snapping Logic
+    
+    private var snappedDate: Date? {
+        guard let raw = rawSelectedDate else { return nil }
+        return trendData.min(by: { abs($0.date.timeIntervalSince(raw)) < abs(($1.date.timeIntervalSince(raw)) ?? 0) })?.date
+    }
+    
+    private var snappedCarrierDate: Date? {
+        guard let raw = rawCarrierSelectedDate else { return nil }
+        return carrierTrendData.min(by: { abs($0.date.timeIntervalSince(raw)) < abs(($1.date.timeIntervalSince(raw)) ?? 0) })?.date
+    }
+
+    func carrierColor(for name: String) -> Color {
+        guard let index = top5CarrierNames.firstIndex(of: name) else { return .gray }
+        return chartColors[index % chartColors.count]
+    }
+    
+    private var carrierColorMap: [String: Color] {
+        var map: [String: Color] = [:]
+        for name in top5CarrierNames {
+            map[name] = carrierColor(for: name)
+        }
+        return map
     }
     
     var currentSegmentEnrollment: Int {
@@ -326,14 +476,11 @@ struct DashboardView: View {
                 else if filter.egwp == "No" { conds.append("p.is_egwp = 0") }
                 
                 let andClause = conds.isEmpty ? "" : " AND " + conds.joined(separator: " AND ")
-                let whereClause = conds.isEmpty ? "" : " WHERE " + conds.joined(separator: " AND ")
                 
-                // Active focus filter (from selected tile)
                 let focusFilter = selectedSegment.sqlFilter
                 let wherePeriodFocus = " WHERE e.period_id = \(period.id)" + andClause + focusFilter
-                let whereTrendFocus = whereClause.isEmpty ? " WHERE 1=1 \(focusFilter)" : whereClause + focusFilter
+                let whereTrendFocus = conds.isEmpty ? " WHERE 1=1 \(focusFilter)" : " WHERE " + conds.joined(separator: " AND ") + focusFilter
 
-                // Segments Definition
                 let segments = [
                     (name: "Total", segment: MarketSegment.total),
                     (name: "SNP", segment: MarketSegment.snp),
@@ -358,20 +505,27 @@ struct DashboardView: View {
                     let pdT = (try dataStore.database.query(sql: pdSQL)).first?["total"] as? Int ?? 0
                     
                     var stats = SegmentStats()
-                    stats.enrollment = curT
-                    stats.momDiff = curT - pmT
+                    stats.enrollment = curT; stats.momDiff = curT - pmT
                     stats.momPct = pmT > 0 ? (Double(stats.momDiff) / Double(pmT)) * 100.0 : 0
                     stats.ytdDiff = curT - pdT
                     stats.ytdPct = pdT > 0 ? (Double(stats.ytdDiff) / Double(pdT)) * 100.0 : 0
                     segmentResults[seg.name] = stats
                 }
 
-                // Main Focus Queries
                 let trendRows = try dataStore.database.query(sql: "SELECT pe.year, pe.month, SUM(e.enrollment) as total FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN county_dim co ON co.county_id = e.county_id JOIN periods pe ON e.period_id = pe.period_id \(whereTrendFocus) GROUP BY pe.period_id, pe.year, pe.month ORDER BY pe.year ASC, pe.month ASC")
                 let trend = trendRows.map { TrendPoint(year: $0["year"] as? Int ?? 0, month: $0["month"] as? Int ?? 0, enrollment: $0["total"] as? Int ?? 0) }
 
-                let carrierRows = try dataStore.database.query(sql: "SELECT c.name as carrier, SUM(e.enrollment) as total FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN carrier_dim c ON c.carrier_id = p.carrier_id JOIN county_dim co ON co.county_id = e.county_id \(wherePeriodFocus) GROUP BY c.carrier_id ORDER BY total DESC LIMIT 20")
+                let carrierRows = try dataStore.database.query(sql: "SELECT c.name as carrier, SUM(e.enrollment) as total FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN carrier_dim c ON c.carrier_id = p.carrier_id JOIN county_dim co ON co.county_id = e.county_id WHERE e.period_id = \(period.id) \(andClause) \(focusFilter) GROUP BY c.carrier_id ORDER BY total DESC LIMIT 20")
                 let carriers = carrierRows.map { EnrollmentByCarrier(carrier: $0["carrier"] as? String ?? "Unknown", enrollment: $0["total"] as? Int ?? 0) }
+                
+                let top5Names = Array(carriers.prefix(5)).map { $0.carrier }
+                var carrierTrend: [CarrierTrendPoint] = []
+                if !top5Names.isEmpty {
+                    let carrierList = top5Names.map { "'\($0.replacingOccurrences(of: "'", with: "''"))'" }.joined(separator: ",")
+                    let ctSQL = "SELECT c.name as carrier, pe.year, pe.month, SUM(e.enrollment) as total FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN carrier_dim c ON c.carrier_id = p.carrier_id JOIN county_dim co ON co.county_id = e.county_id JOIN periods pe ON e.period_id = pe.period_id \(whereTrendFocus) AND c.name IN (\(carrierList)) GROUP BY c.name, pe.period_id, pe.year, pe.month ORDER BY pe.year ASC, pe.month ASC"
+                    let ctRows = try dataStore.database.query(sql: ctSQL)
+                    carrierTrend = ctRows.map { CarrierTrendPoint(carrier: $0["carrier"] as? String ?? "", year: $0["year"] as? Int ?? 0, month: $0["month"] as? Int ?? 0, enrollment: $0["total"] as? Int ?? 0) }
+                }
                 
                 let countyRows = try dataStore.database.query(sql: "SELECT co.name as county, p.name as plan, e.enrollment FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN county_dim co ON co.county_id = e.county_id \(wherePeriodFocus) ORDER BY e.enrollment DESC LIMIT 50")
                 let counties = countyRows.map { EnrollmentByCountyByPlan(county: $0["county"] as? String ?? "Unknown", plan: $0["plan"] as? String ?? "Unknown", enrollment: $0["enrollment"] as? Int ?? 0) }
@@ -384,7 +538,11 @@ struct DashboardView: View {
                     self.pdpEGWPMarket = segmentResults["PDP_EGWP"] ?? .empty
                     self.pdpIndividualMarket = segmentResults["PDP_Indiv"] ?? .empty
                     
-                    self.trendData = trend; self.carrierEnrollments = carriers; self.countyEnrollments = counties
+                    self.trendData = trend; 
+                    self.carrierTrendData = carrierTrend; 
+                    self.top5CarrierNames = top5Names;
+                    self.carrierEnrollments = carriers; 
+                    self.countyEnrollments = counties
                     self.isLoading = false
                 }
             } catch { print("Fetch failed: \(error)"); await MainActor.run { self.isLoading = false } }
