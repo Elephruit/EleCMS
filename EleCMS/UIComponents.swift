@@ -35,38 +35,57 @@ struct ModernCard<Content: View>: View {
 struct EnrollmentMetricCard: View {
     let title: String
     let enrollment: Int
-    var body: some View {
-        ModernCard {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(title.uppercased())
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(.gray)
-                Text(UIFormatter.formatNumber(enrollment))
-                    .font(.system(size: 24, weight: .black, design: .rounded))
-                    .foregroundColor(.white)
-                    .minimumScaleFactor(0.4)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-}
-
-struct GrowthMetricCard: View {
-    let title: String
-    let current: Int
-    let prior: Int?
+    var momDiff: Int? = nil
+    var momPct: Double? = nil
+    var ytdDiff: Int? = nil
+    var ytdPct: Double? = nil
     
     var body: some View {
         ModernCard {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("\(title.uppercased()) GROWTH")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(.gray)
-                Text(UIFormatter.growthString(current: current, prior: prior))
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundColor(UIFormatter.growthColor(current: current, prior: prior))
+            VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title.uppercased())
+                        .font(.system(size: 8, weight: .black))
+                        .foregroundColor(.blue.opacity(0.8))
+                        .kerning(0.5)
+                        .lineLimit(1)
+                    Text(UIFormatter.formatNumber(enrollment))
+                        .font(.system(size: 14, weight: .black, design: .rounded))
+                        .foregroundColor(.white)
+                        .minimumScaleFactor(0.5)
+                        .lineLimit(1)
+                }
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    if let diff = momDiff, let pct = momPct {
+                        growthMiniMetric(label: "MoM", diff: diff, pct: pct)
+                    }
+                    if let diff = ytdDiff, let pct = ytdPct {
+                        growthMiniMetric(label: "YTD", diff: diff, pct: pct)
+                    }
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, -4) // Tighten vertical space
+            .padding(.horizontal, -4) // Tighten horizontal space
+        }
+    }
+    
+    func growthMiniMetric(label: String, diff: Int, pct: Double) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(label)
+                .font(.system(size: 7, weight: .bold))
+                .foregroundColor(.gray)
+            HStack(spacing: 2) {
+                Text("\(diff >= 0 ? "+" : "")\(UIFormatter.formatNumber(diff))")
+                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                Text("|")
+                    .font(.system(size: 8))
+                    .foregroundColor(.white.opacity(0.2))
+                Text(String(format: "%.1f%%", pct))
+                    .font(.system(size: 8, weight: .medium))
+            }
+            .foregroundColor(diff >= 0 ? .green : .red)
         }
     }
 }
@@ -230,7 +249,8 @@ struct FilterOverlay: View {
                         }
                         .padding(.top, 10)
                     }
-                    .padding().padding(.bottom, 40)
+                    .padding()
+                    .padding(.bottom, 40)
                 }
                 .background(AppColors.background)
             }
