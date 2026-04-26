@@ -94,7 +94,7 @@ struct DashboardView: View {
                         if carrierEnrollments.isEmpty && countyEnrollments.isEmpty && !isLoading {
                             emptyStateView
                         } else {
-                            mainDashboardContent
+                            dashboardContentView
                         }
                     }
                     .padding(.bottom, 60)
@@ -196,24 +196,25 @@ struct DashboardView: View {
         }
     }
     
-    var mainDashboardContent: some View {
+    var dashboardContentView: some View {
         VStack(alignment: .leading, spacing: 32) {
-            // Stats
+            // Summary Cards
             HStack(spacing: 16) {
                 ModernCard {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("TOTAL ENROLLMENT")
+                        Text("TOTAL MARKET")
                             .font(.system(size: 10, weight: .bold))
                             .foregroundColor(.gray)
-                        Text(compactFormat(totalEnrollment))
-                            .font(.system(size: 28, weight: .black, design: .rounded))
+                        Text(formatNumber(totalEnrollment)) // Full number with commas
+                            .font(.system(size: 24, weight: .black, design: .rounded))
                             .foregroundColor(.white)
+                            .minimumScaleFactor(0.4)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 
                 VStack(spacing: 12) {
-                    growthMetric(title: "MoM", current: totalEnrollment, prior: priorMonthEnrollment)
+                    growthMetric(title: "MOM", current: totalEnrollment, prior: priorMonthEnrollment)
                     growthMetric(title: "YTD", current: totalEnrollment, prior: priorDecEnrollment)
                 }
                 .frame(width: 140)
@@ -286,7 +287,14 @@ struct DashboardView: View {
             
             // Carriers
             VStack(alignment: .leading, spacing: 16) {
-                Text("CARRIER MARKET SHARE").font(.system(size: 12, weight: .black)).foregroundColor(.white.opacity(0.4)).kerning(1.2).padding(.horizontal)
+                HStack {
+                    Text("CARRIER MARKET SHARE").font(.system(size: 12, weight: .black)).foregroundColor(.white.opacity(0.4)).kerning(1.2)
+                    Spacer()
+                    Text("\(formatNumber(totalEnrollment)) Total")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.blue.opacity(0.6))
+                }
+                .padding(.horizontal)
                 
                 VStack(spacing: 12) {
                     let maxEnroll = carrierEnrollments.map { $0.enrollment }.max() ?? 1
@@ -338,6 +346,12 @@ struct DashboardView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+    
+    func formatNumber(_ number: Int) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        return formatter.string(from: NSNumber(value: number)) ?? "\(number)"
     }
     
     func compactFormat(_ n: Int) -> String {

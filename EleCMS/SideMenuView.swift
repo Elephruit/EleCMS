@@ -5,6 +5,7 @@ enum NavDestination: Hashable {
     case geographicDeepDive
     case carrierDeepDive
     case dataCatalog
+    case settings
 }
 
 struct SideMenuView: View {
@@ -46,6 +47,7 @@ struct SideMenuView: View {
                         .padding(.vertical, 16)
                     
                     menuItem(title: "Data Management", icon: "server.rack", destination: .dataCatalog)
+                    menuItem(title: "Advanced Settings", icon: "gearshape.fill", destination: .settings)
                 }
                 .padding(.horizontal, 16)
                 

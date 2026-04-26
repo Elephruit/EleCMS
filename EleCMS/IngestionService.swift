@@ -38,7 +38,7 @@ final class IngestionService {
         let idxStart = Date()
         try store.database.execute(sql: """
             CREATE INDEX IF NOT EXISTS idx_stg_enr_join ON staging_enrollment(plan_id, contract_id);
-            CREATE INDEX IF NOT EXISTS idx_stg_enr_geo ON staging_enrollment(county, state);
+            CREATE INDEX IF NOT EXISTS idx_stg_enr_geo ON staging_enrollment(county, state, ssa_county_code, fips_county_code);
             CREATE INDEX IF NOT EXISTS idx_stg_con_join ON staging_contracts(plan_id, contract_id);
         """)
         print("DEBUG: Indexing took \(Date().timeIntervalSince(idxStart))s")
@@ -46,7 +46,7 @@ final class IngestionService {
         print("DEBUG: [4/4] Merging...")
         let mergeStart = Date()
         let sql = DBSchema.mergeStagingToFinal.replacingOccurrences(of: ":period_id", with: "\(periodID)")
-        try store.database.execute(sql: "BEGIN TRANSACTION; \(sql) COMMIT;")
+        try store.database.execute(sql: "BEGIN TRANSACTION; DELETE FROM enrollment_records WHERE period_id = \(periodID); \(sql) COMMIT;")
         print("DEBUG: Merge took \(Date().timeIntervalSince(mergeStart))s")
         
         try store.database.execute(sql: "PRAGMA synchronous = NORMAL; PRAGMA journal_mode = WAL; PRAGMA locking_mode = NORMAL;")
@@ -97,7 +97,7 @@ final class IngestionService {
 
     private func fastBareMetalStream(url: URL, table: String, mapping: [String: Int], filterEnrollment: Bool, skipRows: Int) throws {
         let cols: [String] = table == "staging_enrollment" 
-            ? ["contract_id", "plan_id", "state", "county", "enrollment"]
+            ? ["contract_id", "plan_id", "ssa_county_code", "fips_county_code", "state", "county", "enrollment"]
             : (table == "staging_contracts" 
                 ? ["contract_id", "plan_id", "organization_type", "plan_type", "offers_part_d", "organization_name", "organization_marketing_name", "plan_name", "parent_organization", "contract_effective_date", "is_snp", "is_egwp"]
                 : ["contract_id", "plan_id", "carrier_name", "plan_name", "plan_type", "monthly_premium", "deductible", "snp_type"])
@@ -194,6 +194,8 @@ final class IngestionService {
             let c = h.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             if c.contains("contract") && (c.contains("number") || c.contains("id")) { mapping["contract_id"] = i }
             else if c.contains("plan") && (c.contains("id") || c.contains("pbp")) { mapping["plan_id"] = i }
+            else if c.contains("ssa") && c.contains("state") && c.contains("county") { mapping["ssa_county_code"] = i }
+            else if c.contains("fips") && c.contains("state") && c.contains("county") { mapping["fips_county_code"] = i }
             else if cleanHeader(c) == "state" { mapping["state"] = i }
             else if cleanHeader(c) == "county" { mapping["county"] = i }
             else if cleanHeader(c) == "enrollment" { mapping["enrollment"] = i }

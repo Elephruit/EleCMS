@@ -19,6 +19,8 @@ struct MainContainerView: View {
                     CarrierDeepDiveView(dataStore: dataStore, isMenuOpen: $isMenuOpen)
                 case .dataCatalog:
                     DataManagementView(dataStore: dataStore, isMenuOpen: $isMenuOpen)
+                case .settings:
+                    SettingsView(dataStore: dataStore, isMenuOpen: $isMenuOpen)
                 }
             }
             .id(selectedDestination) // Force content recreate on nav

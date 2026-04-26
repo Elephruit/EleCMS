@@ -14,6 +14,8 @@ struct DBSchema {
     CREATE TABLE IF NOT EXISTS staging_enrollment (
         contract_id TEXT,
         plan_id TEXT,
+        ssa_county_code TEXT,
+        fips_county_code TEXT,
         state TEXT,
         county TEXT,
         enrollment TEXT
@@ -70,7 +72,9 @@ struct DBSchema {
         county_id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         state TEXT NOT NULL,
-        UNIQUE(name, state)
+        ssa_county_code TEXT NOT NULL DEFAULT '',
+        fips_county_code TEXT NOT NULL DEFAULT '',
+        UNIQUE(name, state, ssa_county_code, fips_county_code)
     );
 
     -- Fact Table
@@ -102,30 +106,49 @@ struct DBSchema {
     """
 
     static let mergeStagingToFinal: String = """
-    -- Insert new carriers
+    -- 1. Sync Carriers
     INSERT OR IGNORE INTO carrier_dim (name)
     SELECT DISTINCT COALESCE(organization_marketing_name, organization_name) 
-    FROM staging_contracts 
-    WHERE organization_name IS NOT NULL;
+    FROM staging_contracts WHERE organization_name IS NOT NULL;
 
-    -- Insert new counties
-    INSERT OR IGNORE INTO county_dim (name, state)
-    SELECT DISTINCT county, state FROM staging_enrollment;
+    -- 2. Sync Counties (Ensure we have all counties found in enrollment)
+    INSERT OR IGNORE INTO county_dim (name, state, ssa_county_code, fips_county_code)
+    SELECT DISTINCT
+        COALESCE(county, ''),
+        COALESCE(state, ''),
+        COALESCE(ssa_county_code, ''),
+        COALESCE(fips_county_code, '')
+    FROM staging_enrollment;
 
-    -- Insert new plans
-    INSERT OR IGNORE INTO plan_dim (cms_plan_id, contract_id, name, type, carrier_id, is_snp, is_egwp)
-    SELECT 
-        sc.plan_id, 
-        sc.contract_id, 
-        sc.plan_name, 
-        sc.plan_type,
-        c.carrier_id,
-        CASE WHEN sc.is_snp = 'Yes' OR sc.offers_part_d LIKE '%SNP%' OR sc.organization_type LIKE '%SNP%' THEN 1 ELSE 0 END,
-        CASE WHEN sc.is_egwp = 'Yes' OR sc.parent_organization LIKE '%EGHP%' OR sc.organization_name LIKE '%EGHP%' THEN 1 ELSE 0 END
-    FROM staging_contracts sc
-    LEFT JOIN carrier_dim c ON c.name = COALESCE(sc.organization_marketing_name, sc.organization_name);
+    -- 3. Sync Plans from both files to ensure nothing is dropped
+    INSERT OR IGNORE INTO plan_dim (cms_plan_id, contract_id)
+    SELECT DISTINCT plan_id, contract_id FROM staging_contracts;
 
-    -- Insert enrollment records (filtering out '*' happens during ingestion or here)
+    INSERT OR IGNORE INTO plan_dim (cms_plan_id, contract_id)
+    SELECT DISTINCT plan_id, contract_id FROM staging_enrollment;
+
+    -- 4. Update Plans with details from staging_contracts (Safe UPDATE instead of REPLACE)
+    UPDATE plan_dim
+    SET 
+        name = (SELECT sc.plan_name FROM staging_contracts sc WHERE sc.plan_id = plan_dim.cms_plan_id AND sc.contract_id = plan_dim.contract_id),
+        type = (SELECT sc.plan_type FROM staging_contracts sc WHERE sc.plan_id = plan_dim.cms_plan_id AND sc.contract_id = plan_dim.contract_id),
+        carrier_id = (
+            SELECT c.carrier_id 
+            FROM staging_contracts sc 
+            JOIN carrier_dim c ON c.name = COALESCE(sc.organization_marketing_name, sc.organization_name)
+            WHERE sc.plan_id = plan_dim.cms_plan_id AND sc.contract_id = plan_dim.contract_id
+        ),
+        is_snp = (
+            SELECT CASE WHEN sc.is_snp = 'Yes' OR sc.offers_part_d LIKE '%SNP%' OR sc.organization_type LIKE '%SNP%' THEN 1 ELSE 0 END
+            FROM staging_contracts sc WHERE sc.plan_id = plan_dim.cms_plan_id AND sc.contract_id = plan_dim.contract_id
+        ),
+        is_egwp = (
+            SELECT CASE WHEN sc.is_egwp = 'Yes' OR sc.parent_organization LIKE '%EGHP%' OR sc.organization_name LIKE '%EGHP%' THEN 1 ELSE 0 END
+            FROM staging_contracts sc WHERE sc.plan_id = plan_dim.cms_plan_id AND sc.contract_id = plan_dim.contract_id
+        )
+    WHERE EXISTS (SELECT 1 FROM staging_contracts sc WHERE sc.plan_id = plan_dim.cms_plan_id AND sc.contract_id = plan_dim.contract_id);
+
+    -- 5. Insert enrollment records (Filter '*' here too for safety)
     INSERT OR REPLACE INTO enrollment_records (plan_id, county_id, period_id, enrollment)
     SELECT 
         p.plan_id,
@@ -134,7 +157,11 @@ struct DBSchema {
         CAST(REPLACE(se.enrollment, ',', '') AS INTEGER)
     FROM staging_enrollment se
     JOIN plan_dim p ON p.cms_plan_id = se.plan_id AND p.contract_id = se.contract_id
-    JOIN county_dim co ON co.name = se.county AND co.state = se.state
+    JOIN county_dim co
+        ON co.name = COALESCE(se.county, '')
+        AND co.state = COALESCE(se.state, '')
+        AND co.ssa_county_code = COALESCE(se.ssa_county_code, '')
+        AND co.fips_county_code = COALESCE(se.fips_county_code, '')
     WHERE se.enrollment NOT LIKE '*%' 
       AND se.enrollment IS NOT NULL 
       AND se.enrollment != '';
@@ -145,31 +172,14 @@ struct DBSchema {
     INSERT OR IGNORE INTO carrier_dim (name)
     SELECT DISTINCT carrier_name FROM staging_landscape WHERE carrier_name IS NOT NULL;
 
-    -- Insert new plans from landscape
-    INSERT OR IGNORE INTO plan_dim (cms_plan_id, contract_id, name, type, carrier_id, is_snp, snp_type)
-    SELECT 
-        sl.plan_id, 
-        sl.contract_id, 
-        sl.plan_name, 
-        sl.plan_type,
-        c.carrier_id,
-        1,
-        sl.snp_type
-    FROM staging_landscape sl
-    LEFT JOIN carrier_dim c ON c.name = sl.carrier_name
-    WHERE sl.snp_type IS NOT NULL AND sl.snp_type != ''
-    ON CONFLICT(cms_plan_id, contract_id) DO UPDATE SET snp_type = excluded.snp_type, is_snp = 1;
+    -- Update plans with landscape details
+    INSERT OR IGNORE INTO plan_dim (cms_plan_id, contract_id)
+    SELECT DISTINCT plan_id, contract_id FROM staging_landscape;
 
-    INSERT OR IGNORE INTO plan_dim (cms_plan_id, contract_id, name, type, carrier_id)
-    SELECT 
-        sl.plan_id, 
-        sl.contract_id, 
-        sl.plan_name, 
-        sl.plan_type,
-        c.carrier_id
-    FROM staging_landscape sl
-    LEFT JOIN carrier_dim c ON c.name = sl.carrier_name
-    WHERE sl.snp_type IS NULL OR sl.snp_type = '';
+    UPDATE plan_dim SET
+        snp_type = (SELECT sl.snp_type FROM staging_landscape sl WHERE sl.plan_id = plan_dim.cms_plan_id AND sl.contract_id = plan_dim.contract_id),
+        is_snp = 1
+    WHERE EXISTS (SELECT 1 FROM staging_landscape sl WHERE sl.plan_id = plan_dim.cms_plan_id AND sl.contract_id = plan_dim.contract_id AND sl.snp_type IS NOT NULL AND sl.snp_type != '');
 
     -- Insert landscape records
     INSERT OR REPLACE INTO landscape_records (plan_id, year, monthly_premium, deductible)
