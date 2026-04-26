@@ -1,9 +1,8 @@
 import Foundation
+import Darwin
 import SQLite3
 
-// Define SQLite constants
 let SQLITE_STATIC_PTR = unsafeBitCast(0, to: sqlite3_destructor_type.self)
-let SQLITE_TRANSIENT_PTR = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
 final class IngestionService {
     private let store: DataStore
@@ -38,7 +37,7 @@ final class IngestionService {
         let idxStart = Date()
         try store.database.execute(sql: """
             CREATE INDEX IF NOT EXISTS idx_stg_enr_join ON staging_enrollment(plan_id, contract_id);
-            CREATE INDEX IF NOT EXISTS idx_stg_enr_geo ON staging_enrollment(county, state, ssa_county_code, fips_county_code);
+            CREATE INDEX IF NOT EXISTS idx_stg_enr_geo ON staging_enrollment(county, state);
             CREATE INDEX IF NOT EXISTS idx_stg_con_join ON staging_contracts(plan_id, contract_id);
         """)
         print("DEBUG: Indexing took \(Date().timeIntervalSince(idxStart))s")
@@ -46,7 +45,7 @@ final class IngestionService {
         print("DEBUG: [4/4] Merging...")
         let mergeStart = Date()
         let sql = DBSchema.mergeStagingToFinal.replacingOccurrences(of: ":period_id", with: "\(periodID)")
-        try store.database.execute(sql: "BEGIN TRANSACTION; DELETE FROM enrollment_records WHERE period_id = \(periodID); \(sql) COMMIT;")
+        try store.database.execute(sql: "BEGIN TRANSACTION; \(sql) COMMIT;")
         print("DEBUG: Merge took \(Date().timeIntervalSince(mergeStart))s")
         
         try store.database.execute(sql: "PRAGMA synchronous = NORMAL; PRAGMA journal_mode = WAL; PRAGMA locking_mode = NORMAL;")
@@ -58,11 +57,15 @@ final class IngestionService {
     func ingestLandscape(url: URL, year: Int) async throws {
         print("DEBUG: Starting landscape ingestion from \(url.lastPathComponent) for year \(year)")
         try store.database.execute(sql: "PRAGMA synchronous = OFF; PRAGMA journal_mode = OFF; PRAGMA cache_size = -1000000; PRAGMA temp_store = MEMORY; PRAGMA locking_mode = EXCLUSIVE;")
+        
         try store.database.execute(sql: "DROP TABLE IF EXISTS staging_landscape;")
         try store.database.execute(sql: DBSchema.createTables)
+        
         let (mapping, headerRowIndex) = try await detectLandscapeColumns(url: url)
         if mapping.isEmpty { return }
+        
         try fastBareMetalStream(url: url, table: "staging_landscape", mapping: mapping, filterEnrollment: false, skipRows: headerRowIndex + 1)
+        
         let sql = DBSchema.mergeLandscapeToFinal.replacingOccurrences(of: ":year", with: "\(year)")
         try store.database.execute(sql: "BEGIN TRANSACTION; \(sql) COMMIT;")
         try store.database.execute(sql: "DELETE FROM staging_landscape;")
@@ -74,6 +77,7 @@ final class IngestionService {
         defer { try? handle.close() }
         guard let data = try handle.read(upToCount: 65536),
               let content = String(data: data, encoding: .utf8) else { return ([:], 0) }
+        
         let lines = content.components(separatedBy: .newlines)
         for (rowIndex, line) in lines.enumerated() {
             let headers = parseCSVLine(line)
@@ -97,7 +101,7 @@ final class IngestionService {
 
     private func fastBareMetalStream(url: URL, table: String, mapping: [String: Int], filterEnrollment: Bool, skipRows: Int) throws {
         let cols: [String] = table == "staging_enrollment" 
-            ? ["contract_id", "plan_id", "ssa_county_code", "fips_county_code", "state", "county", "enrollment"]
+            ? ["contract_id", "plan_id", "state", "county", "enrollment"]
             : (table == "staging_contracts" 
                 ? ["contract_id", "plan_id", "organization_type", "plan_type", "offers_part_d", "organization_name", "organization_marketing_name", "plan_name", "parent_organization", "contract_effective_date", "is_snp", "is_egwp"]
                 : ["contract_id", "plan_id", "carrier_name", "plan_name", "plan_type", "monthly_premium", "deductible", "snp_type"])
@@ -194,8 +198,6 @@ final class IngestionService {
             let c = h.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             if c.contains("contract") && (c.contains("number") || c.contains("id")) { mapping["contract_id"] = i }
             else if c.contains("plan") && (c.contains("id") || c.contains("pbp")) { mapping["plan_id"] = i }
-            else if c.contains("ssa") && c.contains("state") && c.contains("county") { mapping["ssa_county_code"] = i }
-            else if c.contains("fips") && c.contains("state") && c.contains("county") { mapping["fips_county_code"] = i }
             else if cleanHeader(c) == "state" { mapping["state"] = i }
             else if cleanHeader(c) == "county" { mapping["county"] = i }
             else if cleanHeader(c) == "enrollment" { mapping["enrollment"] = i }

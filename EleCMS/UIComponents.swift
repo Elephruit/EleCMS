@@ -26,9 +26,285 @@ struct ModernCard<Content: View>: View {
                             .stroke(Color.white.opacity(0.05), lineWidth: 1)
                     )
             )
-            .shadow(color: Color.black.opacity(0.4), radius: 15, x: 0, y: 8)
+            .shadow(color: .black.opacity(0.4), radius: 15, x: 0, y: 8)
     }
 }
+
+// MARK: - Reusable Analytics Components
+
+struct EnrollmentMetricCard: View {
+    let title: String
+    let enrollment: Int
+    var body: some View {
+        ModernCard {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(title.uppercased())
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(.gray)
+                Text(UIFormatter.formatNumber(enrollment))
+                    .font(.system(size: 24, weight: .black, design: .rounded))
+                    .foregroundColor(.white)
+                    .minimumScaleFactor(0.4)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+struct GrowthMetricCard: View {
+    let title: String
+    let current: Int
+    let prior: Int?
+    
+    var body: some View {
+        ModernCard {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(title.uppercased()) GROWTH")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(.gray)
+                Text(UIFormatter.growthString(current: current, prior: prior))
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(UIFormatter.growthColor(current: current, prior: prior))
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+struct CustomSectionHeader: View {
+    let title: String
+    var subtitle: String? = nil
+    
+    var body: some View {
+        HStack {
+            Text(title.uppercased())
+                .font(.system(size: 12, weight: .black))
+                .foregroundColor(.white.opacity(0.4))
+                .kerning(1.2)
+            if let sub = subtitle {
+                Spacer()
+                Text(sub)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(.blue.opacity(0.6))
+            }
+        }
+        .padding(.horizontal)
+    }
+}
+
+// MARK: - Unified Header Component
+
+struct PageHeader: View {
+    let title: String
+    let subtitle: String?
+    @Binding var isMenuOpen: Bool
+    var rightButton: AnyView? = nil
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            Color.clear.frame(height: 10) // Extra padding for status bar
+            HStack(alignment: .center) {
+                Button(action: { withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { isMenuOpen = true } }) {
+                    ZStack {
+                        Circle().fill(AppColors.surface).frame(width: 40, height: 40)
+                        Image(systemName: "line.3.horizontal")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundColor(.white)
+                    }
+                }
+                
+                Spacer()
+                
+                VStack(alignment: .center, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                    if let sub = subtitle {
+                        Text(sub.uppercased())
+                            .font(.system(size: 10, weight: .black))
+                            .foregroundColor(.blue)
+                    }
+                }
+                
+                Spacer()
+                
+                if let rb = rightButton {
+                    rb
+                } else {
+                    Color.clear.frame(width: 40, height: 40)
+                }
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 12)
+            .background(AppColors.background.opacity(0.95))
+            .background(VisualEffectView(effect: UIBlurEffect(style: .dark)))
+            
+            Divider().background(Color.white.opacity(0.1))
+        }
+    }
+}
+
+// MARK: - Filter Overlay Component
+
+struct FilterOverlay: View {
+    @Binding var filter: DashboardFilter
+    let availableStates: [String]
+    let availablePlanTypes: [String]
+    @Binding var isPresented: Bool
+    let onApply: () -> Void
+    
+    @State private var draft: DashboardFilter
+    
+    init(filter: Binding<DashboardFilter>, availableStates: [String], availablePlanTypes: [String], isPresented: Binding<Bool>, onApply: @escaping () -> Void) {
+        self._filter = filter
+        self._draft = State(initialValue: filter.wrappedValue)
+        self.availableStates = availableStates
+        self.availablePlanTypes = availablePlanTypes
+        self._isPresented = isPresented
+        self.onApply = onApply
+    }
+    
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            Color.black.opacity(0.6).ignoresSafeArea()
+                .onTapGesture { withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { isPresented = false } }
+            
+            VStack(spacing: 0) {
+                RoundedRectangle(cornerRadius: 3).fill(Color.white.opacity(0.2)).frame(width: 40, height: 6).padding(.top, 10).padding(.bottom, 10)
+                
+                HStack {
+                    Button("Cancel") { withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { isPresented = false } }
+                        .foregroundColor(.white.opacity(0.6))
+                    Spacer()
+                    Text("Market Filters").font(.headline).foregroundColor(.white)
+                    Spacer()
+                    Button("Reset") { withAnimation(.spring()) { draft = DashboardFilter() } }
+                        .foregroundColor(.red)
+                }
+                .padding(.horizontal).padding(.bottom, 16)
+                
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        filterSection(title: "Geography") {
+                            Menu {
+                                Button("All States") { draft.state = nil }
+                                ForEach(availableStates, id: \.self) { s in Button(s) { draft.state = s } }
+                            } label: {
+                                HStack { Text(draft.state ?? "All States"); Spacer(); Image(systemName: "chevron.up.chevron.down").font(.caption) }
+                                .padding().background(Color.white.opacity(0.05)).cornerRadius(10)
+                            }
+                        }
+                        
+                        filterSection(title: "Plan Attributes") {
+                            VStack(spacing: 20) {
+                                Menu {
+                                    Button("All Types") { draft.planType = nil }
+                                    ForEach(availablePlanTypes, id: \.self) { t in Button(t) { draft.planType = t } }
+                                } label: {
+                                    HStack { Text(draft.planType ?? "All Plan Types"); Spacer(); Image(systemName: "chevron.up.chevron.down").font(.caption) }
+                                    .padding().background(Color.white.opacity(0.05)).cornerRadius(10)
+                                }
+                                
+                                filterToggle(title: "EGWP", selection: $draft.egwp)
+                                filterToggle(title: "SNP", selection: $draft.snp)
+                                
+                                if draft.snp == "Yes" {
+                                    VStack(alignment: .leading, spacing: 12) {
+                                        Text("SNP SUB-TYPES").font(.system(size: 10, weight: .bold)).foregroundColor(.gray)
+                                        HStack(spacing: 12) {
+                                            Toggle("D-SNP", isOn: $draft.dsnp).toggleStyle(FilterChipStyle())
+                                            Toggle("C-SNP", isOn: $draft.csnp).toggleStyle(FilterChipStyle())
+                                            Toggle("I-SNP", isOn: $draft.isnp).toggleStyle(FilterChipStyle())
+                                        }
+                                    }
+                                    .padding(.top, 8).transition(.opacity.combined(with: .move(edge: .top)))
+                                }
+                            }
+                        }
+                        
+                        Button(action: {
+                            filter = draft; onApply()
+                            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { isPresented = false }
+                        }) {
+                            Text("Apply Filters").font(.headline).foregroundColor(.white).frame(maxWidth: .infinity).padding().background(Color.blue).cornerRadius(12)
+                        }
+                        .padding(.top, 10)
+                    }
+                    .padding().padding(.bottom, 40)
+                }
+                .background(AppColors.background)
+            }
+            .background(AppColors.background)
+            .cornerRadius(24, corners: [.topLeft, .topRight])
+            .shadow(color: .black.opacity(0.5), radius: 20, x: 0, y: -10)
+        }
+        .ignoresSafeArea()
+    }
+    
+    func filterSection<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title.uppercased()).font(.system(size: 11, weight: .black)).foregroundColor(.white.opacity(0.4)).kerning(1.2)
+            content()
+        }
+    }
+    
+    func filterToggle(title: String, selection: Binding<String>) -> some View {
+        HStack {
+            Text(title).font(.system(size: 14, weight: .bold)).foregroundColor(.white)
+            Spacer()
+            Picker(title, selection: selection) {
+                Text("All").tag("All")
+                Text("Yes").tag("Yes")
+                Text("No").tag("No")
+            }
+            .pickerStyle(.segmented).frame(width: 160)
+        }
+    }
+}
+
+struct FilterChipStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Button(action: { withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { configuration.isOn.toggle() } }) {
+            configuration.label
+                .font(.system(size: 12, weight: .bold))
+                .padding(.vertical, 8).padding(.horizontal, 14)
+                .background(configuration.isOn ? Color.blue : Color.white.opacity(0.05))
+                .foregroundColor(.white).cornerRadius(10)
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.1), lineWidth: configuration.isOn ? 0 : 1))
+        }
+    }
+}
+
+// MARK: - Formatters
+
+struct UIFormatter {
+    static func formatNumber(_ n: Int) -> String {
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        return f.string(from: NSNumber(value: n)) ?? "\(n)"
+    }
+    
+    static func compactFormat(_ n: Int) -> String {
+        let num = Double(n)
+        if num >= 1_000_000 { return String(format: "%.1fM", num / 1_000_000) }
+        if num >= 1_000 { return String(format: "%.1fK", num / 1_000) }
+        return "\(n)"
+    }
+    
+    static func growthString(current: Int, prior: Int?) -> String {
+        guard let prior = prior, prior > 0 else { return "--" }
+        let diff = current - prior
+        let pct = (Double(diff) / Double(prior)) * 100.0
+        return String(format: "%@%.1f%%", diff >= 0 ? "+" : "", pct)
+    }
+    
+    static func growthColor(current: Int, prior: Int?) -> Color {
+        guard let prior = prior, prior > 0 else { return .gray }
+        return current >= prior ? .green : .red
+    }
+}
+
+// MARK: - Utilities
 
 extension Color {
     init(hex: String) {
@@ -37,23 +313,19 @@ extension Color {
         Scanner(string: hex).scanHexInt64(&int)
         let a, r, g, b: UInt64
         switch hex.count {
-        case 3: // RGB (12-bit)
-            (a, r, g, b) = (255, (int >> 8) * 17, (int >> 4 & 0xF) * 17, (int & 0xF) * 17)
-        case 6: // RGB (24-bit)
-            (a, r, g, b) = (255, int >> 16, int >> 8 & 0xFF, int & 0xFF)
-        case 8: // ARGB (32-bit)
-            (a, r, g, b) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
-        default:
-            (a, r, g, b) = (1, 1, 1, 0)
+        case 3: (a, r, g, b) = (255, (int >> 8) * 17, (int >> 4 & 0xF) * 17, (int & 0xF) * 17)
+        case 6: (a, r, g, b) = (255, int >> 16, int >> 8 & 0xFF, int & 0xFF)
+        case 8: (a, r, g, b) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
+        default: (a, r, g, b) = (1, 1, 1, 0)
         }
-        self.init(
-            .sRGB,
-            red: Double(r) / 255,
-            green: Double(g) / 255,
-            blue: Double(b) / 255,
-            opacity: Double(a) / 255
-        )
+        self.init(.sRGB, red: Double(r)/255, green: Double(g)/255, blue: Double(b)/255, opacity: Double(a)/255)
     }
+}
+
+struct VisualEffectView: UIViewRepresentable {
+    var effect: UIVisualEffect?
+    func makeUIView(context: Context) -> UIVisualEffectView { UIVisualEffectView() }
+    func updateUIView(_ uiView: UIVisualEffectView, context: Context) { uiView.effect = effect }
 }
 
 struct Theme {
@@ -63,15 +335,23 @@ struct Theme {
         appearance.backgroundColor = .clear
         appearance.titleTextAttributes = [.foregroundColor: UIColor.white, .font: UIFont.systemFont(ofSize: 17, weight: .bold)]
         appearance.largeTitleTextAttributes = [.foregroundColor: UIColor.white, .font: UIFont.systemFont(ofSize: 34, weight: .bold)]
-        
         UINavigationBar.appearance().standardAppearance = appearance
         UINavigationBar.appearance().compactAppearance = appearance
         UINavigationBar.appearance().scrollEdgeAppearance = appearance
     }
 }
 
-struct VisualEffectView: UIViewRepresentable {
-    var effect: UIVisualEffect?
-    func makeUIView(context: Context) -> UIVisualEffectView { UIVisualEffectView() }
-    func updateUIView(_ uiView: UIVisualEffectView, context: Context) { uiView.effect = effect }
+extension View {
+    func cornerRadius(_ radius: CGFloat, corners: UIRectCorner) -> some View {
+        clipShape(RoundedCorner(radius: radius, corners: corners))
+    }
+}
+
+struct RoundedCorner: Shape {
+    var radius: CGFloat = .infinity
+    var corners: UIRectCorner = .allCorners
+    func path(in rect: CGRect) -> Path {
+        let path = UIBezierPath(roundedRect: rect, byRoundingCorners: corners, cornerRadii: CGSize(width: radius, height: radius))
+        return Path(path.cgPath)
+    }
 }

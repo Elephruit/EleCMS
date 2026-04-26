@@ -1,62 +1,6 @@
 import SwiftUI
 import Charts
 
-struct EnrollmentByCountyByPlan: Identifiable {
-    var id: String { "\(county)-\(plan)" }
-    let county: String
-    let plan: String
-    let enrollment: Int
-}
-
-struct EnrollmentByCarrier: Identifiable {
-    var id: String { carrier }
-    let carrier: String
-    let enrollment: Int
-}
-
-struct TrendPoint: Identifiable {
-    var id: String { "\(year)-\(month)" }
-    let year: Int
-    let month: Int
-    let enrollment: Int
-    var date: Date {
-        var components = DateComponents()
-        components.year = year
-        components.month = month
-        return Calendar.current.date(from: components) ?? Date()
-    }
-}
-
-struct Period: Identifiable, Hashable {
-    let id: Int
-    let year: Int
-    let month: Int
-    
-    var name: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMMM"
-        let monthName = formatter.monthSymbols[month - 1]
-        return "\(monthName) \(year)"
-    }
-    
-    var shortName: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMM"
-        let monthName = formatter.shortMonthSymbols[month - 1]
-        return "\(monthName) '\(year % 100)"
-    }
-}
-
-struct DashboardFilter: Equatable {
-    var state: String?
-    var planType: String?
-    var snp: String = "All" // "All", "Yes", "No"
-    var egwp: String = "All" // "All", "Yes", "No"
-    var dsnp: Bool = false
-    var csnp: Bool = false
-    var isnp: Bool = false
-}
-
 struct DashboardView: View {
     let dataStore: DataStore
     @Binding var isMenuOpen: Bool
@@ -77,7 +21,6 @@ struct DashboardView: View {
     
     @State private var availableStates: [String] = []
     @State private var availablePlanTypes: [String] = []
-    
     @State private var selectedDate: Date?
     
     var body: some View {
@@ -85,7 +28,21 @@ struct DashboardView: View {
             AppColors.background.ignoresSafeArea()
             
             VStack(spacing: 0) {
-                headerView
+                PageHeader(
+                    title: "Market Overview",
+                    subtitle: selectedPeriod?.name,
+                    isMenuOpen: $isMenuOpen,
+                    rightButton: AnyView(
+                        Button(action: { withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { isFilterPresented = true } }) {
+                            ZStack {
+                                Circle().fill(AppColors.surface).frame(width: 40, height: 40)
+                                Image(systemName: "line.3.horizontal.decrease")
+                                    .font(.system(size: 18, weight: .bold))
+                                    .foregroundColor(filterActive ? .orange : .white)
+                            }
+                        }
+                    )
+                )
                 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 32) {
@@ -94,13 +51,12 @@ struct DashboardView: View {
                         if carrierEnrollments.isEmpty && countyEnrollments.isEmpty && !isLoading {
                             emptyStateView
                         } else {
-                            dashboardContentView
+                            dashboardContent
                         }
                     }
                     .padding(.bottom, 60)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             
             if isFilterPresented {
                 FilterOverlay(
@@ -121,50 +77,6 @@ struct DashboardView: View {
         .onAppear {
             fetchPeriods()
             fetchFilterOptions()
-        }
-    }
-    
-    var headerView: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Button(action: { withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { isMenuOpen = true } }) {
-                    ZStack {
-                        Circle().fill(AppColors.surface).frame(width: 40, height: 40)
-                        Image(systemName: "line.3.horizontal")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundColor(.white)
-                    }
-                }
-                
-                Spacer()
-                
-                VStack(alignment: .center, spacing: 2) {
-                    Text("Market Overview")
-                        .font(.system(size: 20, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
-                    if let period = selectedPeriod {
-                        Text(period.name.uppercased())
-                            .font(.system(size: 10, weight: .black))
-                            .foregroundColor(.blue)
-                    }
-                }
-                
-                Spacer()
-                
-                Button(action: { withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { isFilterPresented = true } }) {
-                    ZStack {
-                        Circle().fill(AppColors.surface).frame(width: 40, height: 40)
-                        Image(systemName: "line.3.horizontal.decrease")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundColor(filterActive ? .orange : .white)
-                    }
-                }
-            }
-            .padding(.horizontal)
-            .frame(height: 64)
-            .background(AppColors.background.opacity(0.95))
-            
-            Divider().background(Color.white.opacity(0.1))
         }
     }
     
@@ -196,26 +108,15 @@ struct DashboardView: View {
         }
     }
     
-    var dashboardContentView: some View {
+    var dashboardContent: some View {
         VStack(alignment: .leading, spacing: 32) {
-            // Summary Cards
+            // Highlights
             HStack(spacing: 16) {
-                ModernCard {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("TOTAL MARKET")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(.gray)
-                        Text(formatNumber(totalEnrollment)) // Full number with commas
-                            .font(.system(size: 24, weight: .black, design: .rounded))
-                            .foregroundColor(.white)
-                            .minimumScaleFactor(0.4)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
+                EnrollmentMetricCard(title: "Total Market", enrollment: totalEnrollment)
                 
                 VStack(spacing: 12) {
-                    growthMetric(title: "MOM", current: totalEnrollment, prior: priorMonthEnrollment)
-                    growthMetric(title: "YTD", current: totalEnrollment, prior: priorDecEnrollment)
+                    GrowthMetricCard(title: "MoM", current: totalEnrollment, prior: priorMonthEnrollment)
+                    GrowthMetricCard(title: "YTD", current: totalEnrollment, prior: priorDecEnrollment)
                 }
                 .frame(width: 140)
             }
@@ -224,23 +125,15 @@ struct DashboardView: View {
             // Interactive Chart
             if trendData.count > 1 {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("GROWTH TREND")
-                        .font(.system(size: 12, weight: .black))
-                        .foregroundColor(.white.opacity(0.4))
-                        .kerning(1.2)
-                        .padding(.horizontal)
+                    CustomSectionHeader(title: "Growth Trend")
                     
                     ModernCard {
                         VStack(alignment: .leading, spacing: 12) {
                             if let selectedDate = selectedDate, let point = trendData.first(where: { Calendar.current.isDate($0.date, inSameDayAs: selectedDate) }) {
                                 HStack {
                                     VStack(alignment: .leading) {
-                                        Text(point.date, format: .dateTime.month().year())
-                                            .font(.caption.bold())
-                                            .foregroundColor(.blue)
-                                        Text(compactFormat(point.enrollment))
-                                            .font(.headline.bold())
-                                            .foregroundColor(.white)
+                                        Text(point.date, format: .dateTime.month().year()).font(.caption.bold()).foregroundColor(.blue)
+                                        Text(UIFormatter.formatNumber(point.enrollment)).font(.headline.bold()).foregroundColor(.white)
                                     }
                                     Spacer()
                                 }
@@ -259,10 +152,8 @@ struct DashboardView: View {
                                         RuleMark(x: .value("Date", selectedDate))
                                             .foregroundStyle(Color.white.opacity(0.5))
                                             .lineStyle(StrokeStyle(lineWidth: 1, dash: [5]))
-                                        
                                         PointMark(x: .value("Date", selectedDate), y: .value("Enrollment", point.enrollment))
-                                            .foregroundStyle(.blue)
-                                            .symbolSize(100)
+                                            .foregroundStyle(.blue).symbolSize(100)
                                     }
                                 }
                             }
@@ -271,11 +162,7 @@ struct DashboardView: View {
                             .chartYAxis {
                                 AxisMarks { value in
                                     AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5)).foregroundStyle(Color.white.opacity(0.1))
-                                    AxisValueLabel {
-                                        if let intVal = value.as(Int.self) {
-                                            Text(compactFormat(intVal))
-                                        }
-                                    }
+                                    AxisValueLabel { if let intVal = value.as(Int.self) { Text(UIFormatter.compactFormat(intVal)) } }
                                 }
                             }
                             .frame(height: 180)
@@ -285,16 +172,9 @@ struct DashboardView: View {
                 }
             }
             
-            // Carriers
+            // Carrier List
             VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    Text("CARRIER MARKET SHARE").font(.system(size: 12, weight: .black)).foregroundColor(.white.opacity(0.4)).kerning(1.2)
-                    Spacer()
-                    Text("\(formatNumber(totalEnrollment)) Total")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(.blue.opacity(0.6))
-                }
-                .padding(.horizontal)
+                CustomSectionHeader(title: "Carrier Market Share", subtitle: "\(UIFormatter.formatNumber(totalEnrollment)) Total")
                 
                 VStack(spacing: 12) {
                     let maxEnroll = carrierEnrollments.map { $0.enrollment }.max() ?? 1
@@ -305,8 +185,8 @@ struct DashboardView: View {
                                     Text("#\(index + 1) \(item.carrier)").font(.system(size: 14, weight: .bold)).foregroundColor(.white).lineLimit(1)
                                     Spacer()
                                     VStack(alignment: .trailing) {
-                                        Text(compactFormat(item.enrollment)).font(.system(size: 15, weight: .black, design: .rounded)).foregroundColor(.white)
-                                        Text(String(format: "%.1f%%", Double(item.enrollment) / Double(totalEnrollment) * 100)).font(.system(size: 9, weight: .bold)).foregroundColor(.gray)
+                                        Text(UIFormatter.compactFormat(item.enrollment)).font(.system(size: 15, weight: .black, design: .rounded)).foregroundColor(.white)
+                                        Text(String(format: "%.1f%%", totalEnrollment > 0 ? Double(item.enrollment) / Double(totalEnrollment) * 100 : 0)).font(.system(size: 9, weight: .bold)).foregroundColor(.gray)
                                     }
                                 }
                                 GeometryReader { geo in
@@ -331,46 +211,9 @@ struct DashboardView: View {
         let maxValue = enrollments.max() ?? 1000
         let rangeVal = maxValue - minValue
         let padding = rangeVal > 0 ? Double(rangeVal) * 0.2 : Double(maxValue) * 0.1
-        let finalMin = Swift.max(0, Int(Double(minValue) - padding))
+        let finalMin = max(0, Int(Double(minValue) - padding))
         let finalMax = Int(Double(maxValue) + padding)
         return finalMin...finalMax
-    }
-    
-    func growthMetric(title: String, current: Int, prior: Int?) -> some View {
-        ModernCard {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("\(title) GROWTH").font(.system(size: 8, weight: .bold)).foregroundColor(.gray)
-                Text(growthString(current: current, prior: prior))
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundColor(growthColor(current: current, prior: prior))
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-    
-    func formatNumber(_ number: Int) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        return formatter.string(from: NSNumber(value: number)) ?? "\(number)"
-    }
-    
-    func compactFormat(_ n: Int) -> String {
-        let num = Double(n)
-        if num >= 1_000_000 { return String(format: "%.1fM", num / 1_000_000) }
-        if num >= 1_000 { return String(format: "%.1fK", num / 1_000) }
-        return "\(n)"
-    }
-    
-    func growthString(current: Int, prior: Int?) -> String {
-        guard let prior = prior, prior > 0 else { return "--" }
-        let diff = current - prior
-        let pct = (Double(diff) / Double(prior)) * 100.0
-        return String(format: "%@%.1f%%", diff >= 0 ? "+" : "", pct)
-    }
-    
-    func growthColor(current: Int, prior: Int?) -> Color {
-        guard let prior = prior, prior > 0 else { return .gray }
-        return current >= prior ? .green : .red
     }
     
     var emptyStateView: some View {
@@ -408,8 +251,6 @@ struct DashboardView: View {
             do {
                 let stateRows = try dataStore.database.query(sql: "SELECT DISTINCT state FROM county_dim WHERE state != '' ORDER BY state")
                 let states = stateRows.compactMap { $0["state"] as? String }
-                
-                // Exclude SNP-specific types from the general Plan Type filter
                 let typeRows = try dataStore.database.query(sql: """
                     SELECT DISTINCT type FROM plan_dim 
                     WHERE type IS NOT NULL AND type != '' 
@@ -417,7 +258,6 @@ struct DashboardView: View {
                     ORDER BY type
                 """)
                 let types = typeRows.compactMap { $0["type"] as? String }
-                
                 await MainActor.run { self.availableStates = states; self.availablePlanTypes = types }
             } catch { print("Filter options failed: \(error)") }
         }
@@ -431,7 +271,6 @@ struct DashboardView: View {
                 var conds: [String] = []
                 if let s = filter.state { conds.append("co.state = '\(s)'") }
                 if let t = filter.planType { conds.append("p.type = '\(t)'") }
-                
                 if filter.snp == "Yes" {
                     var snpTypes: [String] = []
                     if filter.dsnp { snpTypes.append("'D-SNP'") }
@@ -440,7 +279,6 @@ struct DashboardView: View {
                     if !snpTypes.isEmpty { conds.append("p.snp_type IN (\(snpTypes.joined(separator: ",")))") }
                     else { conds.append("p.is_snp = 1") }
                 } else if filter.snp == "No" { conds.append("p.is_snp = 0") }
-                
                 if filter.egwp == "Yes" { conds.append("p.is_egwp = 1") }
                 else if filter.egwp == "No" { conds.append("p.is_egwp = 0") }
                 
@@ -474,184 +312,5 @@ struct DashboardView: View {
                 }
             } catch { print("Fetch failed: \(error)"); await MainActor.run { self.isLoading = false } }
         }
-    }
-}
-
-struct FilterOverlay: View {
-    @Binding var filter: DashboardFilter
-    let availableStates: [String]
-    let availablePlanTypes: [String]
-    @Binding var isPresented: Bool
-    let onApply: () -> Void
-    
-    @State private var draft: DashboardFilter
-    
-    init(filter: Binding<DashboardFilter>, availableStates: [String], availablePlanTypes: [String], isPresented: Binding<Bool>, onApply: @escaping () -> Void) {
-        self._filter = filter
-        self._draft = State(initialValue: filter.wrappedValue)
-        self.availableStates = availableStates
-        self.availablePlanTypes = availablePlanTypes
-        self._isPresented = isPresented
-        self.onApply = onApply
-    }
-    
-    var body: some View {
-        ZStack(alignment: .bottom) {
-            Color.black.opacity(0.6).ignoresSafeArea()
-                .onTapGesture { withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { isPresented = false } }
-            
-            VStack(spacing: 0) {
-                RoundedRectangle(cornerRadius: 3).fill(Color.white.opacity(0.2)).frame(width: 40, height: 6).padding(.top, 10).padding(.bottom, 10)
-                
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Market Filters")
-                            .font(.headline)
-                            .foregroundColor(.white)
-                    }
-                    
-                    Spacer()
-                    
-                    Button("Reset") { withAnimation(.spring()) { draft = DashboardFilter() } }
-                        .foregroundColor(.red)
-                    
-                    Button(action: { withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { isPresented = false } }) {
-                        Label("Close", systemImage: "xmark")
-                            .font(.system(size: 15, weight: .bold))
-                            .padding(.vertical, 10)
-                            .padding(.horizontal, 14)
-                            .background(Color.white.opacity(0.14))
-                            .foregroundColor(.white)
-                            .clipShape(Capsule())
-                            .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 1))
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.horizontal).padding(.bottom, 16)
-                
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
-                        filterSection(title: "Geography") {
-                            Menu {
-                                Button("All States") { draft.state = nil }
-                                ForEach(availableStates, id: \.self) { s in Button(s) { draft.state = s } }
-                            } label: {
-                                HStack { Text(draft.state ?? "All States"); Spacer(); Image(systemName: "chevron.up.chevron.down").font(.caption) }
-                                .padding().background(Color.white.opacity(0.05)).cornerRadius(10)
-                            }
-                        }
-                        
-                        filterSection(title: "Plan Attributes") {
-                            VStack(spacing: 20) {
-                                Menu {
-                                    Button("All Types") { draft.planType = nil }
-                                    ForEach(availablePlanTypes, id: \.self) { t in Button(t) { draft.planType = t } }
-                                } label: {
-                                    HStack { Text(draft.planType ?? "All Plan Types"); Spacer(); Image(systemName: "chevron.up.chevron.down").font(.caption) }
-                                    .padding().background(Color.white.opacity(0.05)).cornerRadius(10)
-                                }
-                                
-                                filterToggle(title: "EGWP", selection: $draft.egwp)
-                                filterToggle(title: "SNP", selection: $draft.snp)
-                                
-                                if draft.snp == "Yes" {
-                                    VStack(alignment: .leading, spacing: 12) {
-                                        Text("SNP SUB-TYPES").font(.system(size: 10, weight: .bold)).foregroundColor(.gray)
-                                        HStack(spacing: 12) {
-                                            Toggle("D-SNP", isOn: $draft.dsnp).toggleStyle(FilterChipStyle())
-                                            Toggle("C-SNP", isOn: $draft.csnp).toggleStyle(FilterChipStyle())
-                                            Toggle("I-SNP", isOn: $draft.isnp).toggleStyle(FilterChipStyle())
-                                        }
-                                    }
-                                    .padding(.top, 8).transition(.opacity.combined(with: .move(edge: .top)))
-                                }
-                            }
-                        }
-                        
-                        HStack(spacing: 12) {
-                            Button(action: {
-                                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { isPresented = false }
-                            }) {
-                                Label("Close", systemImage: "xmark")
-                                    .font(.headline)
-                                    .foregroundColor(.white)
-                                    .frame(maxWidth: .infinity)
-                                    .padding()
-                                    .background(Color.white.opacity(0.12))
-                                    .cornerRadius(12)
-                                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.16), lineWidth: 1))
-                            }
-                            
-                            Button(action: {
-                                filter = draft; onApply()
-                                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { isPresented = false }
-                            }) {
-                                Text("Apply Filters")
-                                    .font(.headline)
-                                    .foregroundColor(.white)
-                                    .frame(maxWidth: .infinity)
-                                    .padding()
-                                    .background(Color.blue)
-                                    .cornerRadius(12)
-                            }
-                        }
-                        .padding(.top, 10)
-                    }
-                    .padding().padding(.bottom, 40)
-                }
-                .background(AppColors.background)
-            }
-            .background(AppColors.background)
-            .clipShape(RoundedCorner(radius: 24, corners: [.topLeft, .topRight]))
-            .shadow(color: .black.opacity(0.5), radius: 20, x: 0, y: -10)
-        }
-    }
-    
-    func filterSection<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(title.uppercased()).font(.system(size: 11, weight: .black)).foregroundColor(.white.opacity(0.4)).kerning(1.2)
-            content()
-        }
-    }
-    
-    func filterToggle(title: String, selection: Binding<String>) -> some View {
-        HStack {
-            Text(title).font(.system(size: 14, weight: .bold)).foregroundColor(.white)
-            Spacer()
-            Picker(title, selection: selection) {
-                Text("All").tag("All")
-                Text("Yes").tag("Yes")
-                Text("No").tag("No")
-            }
-            .pickerStyle(.segmented).frame(width: 160)
-        }
-    }
-}
-
-struct FilterChipStyle: ToggleStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        Button(action: { withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { configuration.isOn.toggle() } }) {
-            configuration.label
-                .font(.system(size: 12, weight: .bold))
-                .padding(.vertical, 8).padding(.horizontal, 14)
-                .background(configuration.isOn ? Color.blue : Color.white.opacity(0.05))
-                .foregroundColor(.white).cornerRadius(10)
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.1), lineWidth: configuration.isOn ? 0 : 1))
-        }
-    }
-}
-
-extension View {
-    func cornerRadius(_ radius: CGFloat, corners: UIRectCorner) -> some View {
-        clipShape(RoundedCorner(radius: radius, corners: corners))
-    }
-}
-
-struct RoundedCorner: Shape {
-    var radius: CGFloat = .infinity
-    var corners: UIRectCorner = .allCorners
-    func path(in rect: CGRect) -> Path {
-        let path = UIBezierPath(roundedRect: rect, byRoundingCorners: corners, cornerRadii: CGSize(width: radius, height: radius))
-        return Path(path.cgPath)
     }
 }

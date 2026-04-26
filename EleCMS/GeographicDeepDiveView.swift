@@ -16,7 +16,7 @@ struct GeographicDeepDiveView: View {
             AppColors.background.ignoresSafeArea()
             
             VStack(spacing: 0) {
-                headerView
+                PageHeader(title: "Geographic Deep-dive", subtitle: selectedState, isMenuOpen: $isMenuOpen)
                 
                 if availableStates.isEmpty {
                     VStack(spacing: 20) {
@@ -49,32 +49,6 @@ struct GeographicDeepDiveView: View {
         .onAppear { fetchAvailableStates() }
     }
     
-    var headerView: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Button(action: { withAnimation(.spring()) { isMenuOpen = true } }) {
-                    ZStack {
-                        Circle().fill(AppColors.surface).frame(width: 40, height: 40)
-                        Image(systemName: "line.3.horizontal")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundColor(.white)
-                    }
-                }
-                Spacer()
-                Text("Geographic Deep-dive")
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
-                Spacer()
-                Color.clear.frame(width: 40)
-            }
-            .padding(.horizontal)
-            .frame(height: 64)
-            .background(AppColors.background.opacity(0.95))
-            
-            Divider().background(Color.white.opacity(0.1))
-        }
-    }
-    
     var statePicker: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 12) {
@@ -102,26 +76,12 @@ struct GeographicDeepDiveView: View {
     func analyticsContent(for state: String) -> some View {
         VStack(alignment: .leading, spacing: 32) {
             // Summary Card
-            ModernCard {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("TOTAL ENROLLMENT IN \(state)")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(.gray)
-                    Text(compactFormat(totalEnrollment))
-                        .font(.system(size: 32, weight: .black, design: .rounded))
-                        .foregroundColor(.white)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(.horizontal)
+            EnrollmentMetricCard(title: "Total Enrollment in \(state)", enrollment: totalEnrollment)
+                .padding(.horizontal)
             
             // Market Share
             VStack(alignment: .leading, spacing: 16) {
-                Text("CARRIER MARKET SHARE (\(state))")
-                    .font(.system(size: 12, weight: .black))
-                    .foregroundColor(.white.opacity(0.4))
-                    .kerning(1.2)
-                    .padding(.horizontal)
+                CustomSectionHeader(title: "Carrier Market Share (\(state))")
                 
                 VStack(spacing: 12) {
                     let maxVal = carrierMarketShare.map { $0.enrollment }.max() ?? 1
@@ -133,7 +93,7 @@ struct GeographicDeepDiveView: View {
                                         .font(.system(size: 14, weight: .bold))
                                         .foregroundColor(.white)
                                     Spacer()
-                                    Text(compactFormat(item.enrollment))
+                                    Text(UIFormatter.compactFormat(item.enrollment))
                                         .font(.system(size: 15, weight: .black, design: .rounded))
                                 }
                                 GeometryReader { geo in
@@ -152,11 +112,7 @@ struct GeographicDeepDiveView: View {
             
             // County Breakdown
             VStack(alignment: .leading, spacing: 16) {
-                Text("COUNTY BREAKDOWN")
-                    .font(.system(size: 12, weight: .black))
-                    .foregroundColor(.white.opacity(0.4))
-                    .kerning(1.2)
-                    .padding(.horizontal)
+                CustomSectionHeader(title: "County Breakdown")
                 
                 VStack(spacing: 1) {
                     ForEach(countyBreakdown) { item in
@@ -166,7 +122,7 @@ struct GeographicDeepDiveView: View {
                                 Text(item.county.uppercased()).font(.system(size: 10, weight: .bold)).foregroundColor(.gray)
                             }
                             Spacer()
-                            Text(compactFormat(item.enrollment)).font(.system(size: 14, weight: .bold, design: .rounded)).foregroundColor(.white)
+                            Text(UIFormatter.compactFormat(item.enrollment)).font(.system(size: 14, weight: .bold, design: .rounded)).foregroundColor(.white)
                         }
                         .padding()
                         .background(AppColors.surface.opacity(0.4))
@@ -191,13 +147,6 @@ struct GeographicDeepDiveView: View {
         .padding(.top, 100)
     }
     
-    func compactFormat(_ n: Int) -> String {
-        let num = Double(n)
-        if num >= 1_000_000 { return String(format: "%.1fM", num / 1_000_000) }
-        if num >= 1_000 { return String(format: "%.1fK", num / 1_000) }
-        return "\(n)"
-    }
-    
     func fetchAvailableStates() {
         Task {
             do {
@@ -216,13 +165,13 @@ struct GeographicDeepDiveView: View {
                 let pRow = try dataStore.database.query(sql: "SELECT period_id FROM periods ORDER BY year DESC, month DESC LIMIT 1")
                 guard let pid = pRow.first?["period_id"] as? Int else { isLoading = false; return }
                 
-                let totalRow = try dataStore.database.query(sql: "SELECT SUM(e.enrollment) as total FROM enrollment_records e JOIN county_dim co ON co.county_id = e.county_id WHERE co.state = '\(state)' AND e.period_id = \(pid)")
+                let totalRow = try dataStore.database.query(sql: "SELECT SUM(e.enrollment) as total FROM enrollment_records e JOIN county_dim co ON co.county_id = e.county_id WHERE co.state = ? AND e.period_id = ?", arguments: [state, pid])
                 let total = totalRow.first?["total"] as? Int ?? 0
                 
-                let carrierRows = try dataStore.database.query(sql: "SELECT c.name as carrier, SUM(e.enrollment) as total FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN carrier_dim c ON c.carrier_id = p.carrier_id JOIN county_dim co ON co.county_id = e.county_id WHERE co.state = '\(state)' AND e.period_id = \(pid) GROUP BY c.carrier_id ORDER BY total DESC LIMIT 15")
+                let carrierRows = try dataStore.database.query(sql: "SELECT c.name as carrier, SUM(e.enrollment) as total FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN carrier_dim c ON c.carrier_id = p.carrier_id JOIN county_dim co ON co.county_id = e.county_id WHERE co.state = ? AND e.period_id = ? GROUP BY c.carrier_id ORDER BY total DESC LIMIT 15", arguments: [state, pid])
                 let carriers = carrierRows.map { EnrollmentByCarrier(carrier: $0["carrier"] as? String ?? "Unknown", enrollment: $0["total"] as? Int ?? 0) }
                 
-                let countyRows = try dataStore.database.query(sql: "SELECT co.name as county, p.name as plan, e.enrollment FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN county_dim co ON co.county_id = e.county_id WHERE co.state = '\(state)' AND e.period_id = \(pid) ORDER BY e.enrollment DESC LIMIT 50")
+                let countyRows = try dataStore.database.query(sql: "SELECT co.name as county, p.name as plan, e.enrollment FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN county_dim co ON co.county_id = e.county_id WHERE co.state = ? AND e.period_id = ? ORDER BY e.enrollment DESC LIMIT 50", arguments: [state, pid])
                 let counties = countyRows.map { EnrollmentByCountyByPlan(county: $0["county"] as? String ?? "Unknown", plan: $0["plan"] as? String ?? "Unknown", enrollment: $0["enrollment"] as? Int ?? 0) }
                 
                 await MainActor.run {

@@ -117,15 +117,10 @@ struct SettingsView: View {
         HStack {
             Text(title).foregroundColor(.white).font(.system(size: 14))
             Spacer()
-            Text(formatNumber(count))
+            Text(UIFormatter.formatNumber(count))
                 .foregroundColor(.blue)
                 .font(.system(size: 14, weight: .bold, design: .monospaced))
         }
-    }
-    
-    func formatNumber(_ n: Int) -> String {
-        let f = NumberFormatter(); f.numberStyle = .decimal
-        return f.string(from: NSNumber(value: n)) ?? "\(n)"
     }
     
     func fetchDiagnostics() {
