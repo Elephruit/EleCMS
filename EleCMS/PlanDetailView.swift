@@ -35,10 +35,12 @@ struct PlanDetailView: View {
     struct PlanCountyEnrollment: Identifiable {
         let id: String // County Name
         let state: String
+        let fips: String
         let enrollment: Int
-        let lat: Double
-        let lon: Double
     }
+    
+    @State private var footprintFIPS: Set<String> = []
+    @State private var footprintStates: Set<String> = []
     
     init(dataStore: DataStore, isMenuOpen: Binding<Bool>, planID: String? = nil) {
         self.dataStore = dataStore
@@ -172,16 +174,23 @@ struct PlanDetailView: View {
             MarketTrendChart(trendData: trendData, rawSelectedDate: .constant(nil), chartDomain: chartDomain)
                 .padding(.horizontal)
             
-            // Service Area Map (Placeholder logic for counties)
+            // Service Area Map
             VStack(alignment: .leading, spacing: 16) {
-                CustomSectionHeader(title: "Service Area Footprint", subtitle: "\(countyEnrollments.count) Counties")
+                CustomSectionHeader(title: "Service Area Footprint", subtitle: "\(footprintFIPS.count) Counties Offered")
                 
                 ModernCard {
-                    VStack(spacing: 12) {
-                        // In a real app with GeoJSON, this would be a shaded map.
-                        // Here we show a high-end list with state context.
-                        LazyVStack(spacing: 1) {
-                            ForEach(countyEnrollments.prefix(15)) { ce in
+                    VStack(spacing: 0) {
+                        CountyMapView(footprintFIPS: footprintFIPS, states: footprintStates)
+                            .frame(height: 300)
+                            .cornerRadius(12)
+                        
+                        Divider().background(Color.white.opacity(0.1)).padding(.vertical, 12)
+                        
+                        // Top Counties List
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("TOP COUNTIES BY ENROLLMENT").font(.system(size: 9, weight: .black)).foregroundColor(.gray)
+                            
+                            ForEach(countyEnrollments.prefix(5)) { ce in
                                 HStack {
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(ce.id).font(.system(size: 12, weight: .bold)).foregroundColor(.white)
@@ -190,8 +199,6 @@ struct PlanDetailView: View {
                                     Spacer()
                                     Text(UIFormatter.formatNumber(ce.enrollment)).font(.system(size: 12, weight: .bold, design: .rounded)).foregroundColor(.white)
                                 }
-                                .padding(.vertical, 8)
-                                .padding(.horizontal, 4)
                             }
                         }
                     }
@@ -324,21 +331,65 @@ struct PlanDetailView: View {
                 """, arguments: [contractID, cmsPlanID])
                 let trend = trendRows.map { TrendPoint(year: $0["year"] as? Int ?? 0, month: $0["month"] as? Int ?? 0, enrollment: $0["total"] as? Int ?? 0) }
                 
-                // 3. County Breakdown (Proxy for footprint)
-                let countyRows = try dataStore.database.query(sql: """
-                    SELECT co.name, co.state, e.enrollment
+                // 3. Geographic Footprint (From Landscape)
+                // Use the latest available year in PSA that is <= current period year
+                let footprintRows = try dataStore.database.query(sql: """
+                    SELECT co.name, co.state, co.fips_county_code
+                    FROM plan_service_area psa
+                    JOIN plan_dim p ON p.plan_id = psa.plan_id
+                    JOIN county_dim co ON co.county_id = psa.county_id
+                    WHERE p.contract_id = ? AND p.cms_plan_id = ? 
+                    AND psa.year = (SELECT MAX(year) FROM plan_service_area WHERE plan_id = p.plan_id AND year <= \(currentPeriod.year))
+                """, arguments: [contractID, cmsPlanID])
+                
+                let footprint = footprintRows.map { row in
+                    let rawFips = row["fips_county_code"] as? String ?? ""
+                    let paddedFips = rawFips.count == 4 ? "0\(rawFips)" : rawFips
+                    return PlanCountyEnrollment(
+                        id: row["name"] as? String ?? "",
+                        state: row["state"] as? String ?? "",
+                        fips: paddedFips,
+                        enrollment: 0
+                    )
+                }
+                
+                // 4. Enrollment Data
+                let enrollmentRows = try dataStore.database.query(sql: """
+                    SELECT co.name, co.state, co.fips_county_code, e.enrollment
                     FROM enrollment_records e
                     JOIN plan_dim p ON p.plan_id = e.plan_id
                     JOIN county_dim co ON co.county_id = e.county_id
                     WHERE p.contract_id = ? AND p.cms_plan_id = ? AND e.period_id = \(currentPeriod.id)
                     ORDER BY e.enrollment DESC
                 """, arguments: [contractID, cmsPlanID])
-                let counties = countyRows.map { PlanCountyEnrollment(id: $0["name"] as? String ?? "", state: $0["state"] as? String ?? "", enrollment: $0["enrollment"] as? Int ?? 0, lat: 0, lon: 0) }
+                
+                let enrollmentCounties = enrollmentRows.map { row in
+                    let rawFips = row["fips_county_code"] as? String ?? ""
+                    let paddedFips = rawFips.count == 4 ? "0\(rawFips)" : rawFips
+                    return PlanCountyEnrollment(
+                        id: row["name"] as? String ?? "",
+                        state: row["state"] as? String ?? "",
+                        fips: paddedFips,
+                        enrollment: row["enrollment"] as? Int ?? 0
+                    )
+                }
+                
+                var fipsSet = Set(footprint.map { $0.fips })
+                if fipsSet.isEmpty {
+                    // Fallback to enrollment counties if footprint is empty
+                    fipsSet = Set(enrollmentCounties.map { $0.fips })
+                }
+                
+                let allStates = Set(footprint.map { $0.state })
+                    .union(Set(enrollmentCounties.map { $0.state }))
+                    .filter { !$0.isEmpty && $0 != "??" }
                 
                 await MainActor.run {
                     self.planDetails = detailData
                     self.trendData = trend
-                    self.countyEnrollments = counties
+                    self.countyEnrollments = enrollmentCounties
+                    self.footprintFIPS = fipsSet
+                    self.footprintStates = allStates
                     self.isLoading = false
                 }
             } catch { print("Plan data failed: \(error)"); await MainActor.run { self.isLoading = false } }

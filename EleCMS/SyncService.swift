@@ -18,7 +18,7 @@ final class SyncService: ObservableObject {
     }
     
     func syncSpecific(year: Int, month: Int?) async {
-        print("DEBUG: syncSpecific called for year: \(year), month: \(month ?? 0)")
+        Logger.log("DEBUG: syncSpecific called for year: \(year), month: \(month ?? 0)")
         await MainActor.run {
             isSyncing = true
             status = "Scraping CMS for \(year)\(month != nil ? "-\(month!)" : "")..."
@@ -26,7 +26,7 @@ final class SyncService: ObservableObject {
         
         do {
             if let m = month {
-                print("DEBUG: Handling Monthly CPSC sync")
+                Logger.log("DEBUG: [CPSC] Handling Monthly CPSC sync")
                 let tasks = try await fetcher.scrapeCPSCPage()
                 
                 var urlsToTry: [URL] = []
@@ -39,7 +39,7 @@ final class SyncService: ObservableObject {
                 var zipURL: URL? = nil
                 var lastError: Error? = nil
                 for url in urlsToTry {
-                    print("DEBUG: Trying URL: \(url)")
+                    Logger.log("DEBUG: [CPSC] Trying URL: \(url)")
                     do {
                         let task = CMSDownloadTask(url: url, type: .cpscEnrollment, year: year, month: m)
                         zipURL = try await fetcher.download(task: task)
@@ -66,7 +66,7 @@ final class SyncService: ObservableObject {
                 try await ingestion.ingestCPSC(enrollmentURL: eCSV, contractsURL: cCSV, year: year, month: m)
                 
             } else {
-                print("DEBUG: Handling Annual Landscape sync for year \(year)")
+                Logger.log("DEBUG: [Landscape] Handling Annual Landscape sync for year \(year)")
                 let tasks = try await fetcher.scrapeLandscapePage()
                 
                 var urlsToTry: [URL] = []
@@ -77,40 +77,48 @@ final class SyncService: ObservableObject {
                 var zipURL: URL? = nil
                 var lastError: Error? = nil
                 for url in urlsToTry {
-                    print("DEBUG: Trying Landscape URL: \(url)")
+                    Logger.log("DEBUG: [Landscape] Trying Landscape URL: \(url)")
                     do {
                         let task = CMSDownloadTask(url: url, type: .landscape, year: year, month: nil)
                         zipURL = try await fetcher.download(task: task)
-                        if zipURL != nil { break }
+                        if zipURL != nil { 
+                            Logger.log("DEBUG: [Landscape] Download successful: \(url)")
+                            break 
+                        }
                     } catch {
                         lastError = error
+                        Logger.log("DEBUG: [Landscape] Download failed for \(url): \(error.localizedDescription)")
                     }
                 }
                 
                 guard let finalZipURL = zipURL else {
-                    throw lastError ?? NSError(domain: "Sync", code: 404, userInfo: [NSLocalizedDescriptionKey: "Could not find Landscape file for \(year)."])
+                    throw lastError ?? NSError(domain: "Sync", code: 404, userInfo: [NSLocalizedDescriptionKey: "Could not find Landscape file for \(year) on CMS server."])
                 }
                 
                 await MainActor.run { status = "Extracting Landscape..." }
                 let extractedFiles = try fetcher.unzip(url: finalZipURL)
+                Logger.log("DEBUG: [Landscape] Initial extraction yielded \(extractedFiles.count) items.")
                 
                 var csvFiles: [URL] = []
-                func collectCSVs(from files: [URL], forYear targetYear: Int) throws {
+                func collectCSVs(from files: [URL], forYear targetYear: Int, isInsideYearMatch: Bool = false) throws {
                     let yearStr = "\(targetYear)"
                     for file in files {
                         let name = file.lastPathComponent
+                        
                         if file.pathExtension.lowercased() == "zip" {
-                            // ONLY drill into ZIPs that strictly mention our target year
-                            if name.contains(yearStr) {
-                                print("DEBUG: Unzipping strictly relevant ZIP: \(name)")
+                            // Only drill into ZIPs if the name matches our year, OR if it's a general name inside a matched path
+                            let nameMatchesYear = name.contains(yearStr)
+                            if nameMatchesYear || isInsideYearMatch {
+                                Logger.log("DEBUG: [Landscape] Unzipping nested ZIP: \(name)")
                                 let nestedFiles = try fetcher.unzip(url: file)
-                                try collectCSVs(from: nestedFiles, forYear: targetYear)
+                                try collectCSVs(from: nestedFiles, forYear: targetYear, isInsideYearMatch: nameMatchesYear || isInsideYearMatch)
                             }
                         } else if file.pathExtension.lowercased() == "csv" {
-                            // ONLY collect CSVs that strictly match the year OR are in a path that does
-                            if name.contains(yearStr) || file.path.contains(yearStr) {
+                            // Collect CSV if name matches year, or if we are already inside a matched folder/zip
+                            if name.contains(yearStr) || isInsideYearMatch {
                                 let lower = name.lowercased()
                                 if !lower.contains("readme") && !lower.contains("read_me") {
+                                    Logger.log("DEBUG: [Landscape] Found candidate CSV: \(name)")
                                     csvFiles.append(file)
                                 }
                             }
@@ -121,16 +129,17 @@ final class SyncService: ObservableObject {
                 try collectCSVs(from: extractedFiles, forYear: year)
                 
                 if csvFiles.isEmpty {
+                    Logger.log("DEBUG: [Landscape] ERROR: No matching CSVs found in archive.")
                     throw NSError(domain: "Sync", code: 404, userInfo: [NSLocalizedDescriptionKey: "No data files matching \(year) were found in the archive."])
                 }
                 
-                print("DEBUG: Found \(csvFiles.count) Landscape CSVs for \(year)")
-                await MainActor.run { status = "Ingesting Landscape..." }
+                Logger.log("DEBUG: [Landscape] Found \(csvFiles.count) Landscape CSVs to ingest.")
+                await MainActor.run { status = "Ingesting \(csvFiles.count) files..." }
                 
-                // Clear staging once for the year
-                try dataStore.database.execute(sql: "DELETE FROM staging_landscape;")
-                for csv in csvFiles {
-                    print("DEBUG: Ingesting: \(csv.lastPathComponent)")
+                // DROP staging once for the year to ensure schema updates are applied
+                try dataStore.database.execute(sql: "DROP TABLE IF EXISTS staging_landscape;")
+                for (index, csv) in csvFiles.enumerated() {
+                    Logger.log("DEBUG: [Landscape] [\(index+1)/\(csvFiles.count)] Ingesting: \(csv.lastPathComponent)")
                     try await ingestion.ingestLandscape(url: csv, year: year)
                 }
             }
@@ -140,7 +149,7 @@ final class SyncService: ObservableObject {
                 isSyncing = false
             }
         } catch {
-            print("DEBUG: Sync FAILED: \(error)")
+            Logger.log("DEBUG: Sync FAILED: \(error)")
             await MainActor.run {
                 status = "Failed: \(error.localizedDescription)"
                 isSyncing = false

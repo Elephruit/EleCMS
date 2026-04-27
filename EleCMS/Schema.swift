@@ -189,11 +189,12 @@ struct DBSchema {
     INSERT OR IGNORE INTO plan_dim (cms_plan_id, contract_id)
     SELECT DISTINCT plan_id, contract_id FROM staging_landscape;
 
-    -- 3. Update snp_type for plans from landscape data
+    -- 3. Update plan details (type, snp_type) from landscape data
     UPDATE plan_dim SET
-        snp_type = (SELECT sl.snp_type FROM staging_landscape sl WHERE sl.plan_id = plan_dim.cms_plan_id AND sl.contract_id = plan_dim.contract_id),
-        is_snp = 1
-    WHERE EXISTS (SELECT 1 FROM staging_landscape sl WHERE sl.plan_id = plan_dim.cms_plan_id AND sl.contract_id = plan_dim.contract_id AND sl.snp_type IS NOT NULL AND sl.snp_type != '');
+        snp_type = (SELECT sl.snp_type FROM staging_landscape sl WHERE sl.plan_id = plan_dim.cms_plan_id AND sl.contract_id = plan_dim.contract_id LIMIT 1),
+        type = (SELECT sl.plan_type FROM staging_landscape sl WHERE sl.plan_id = plan_dim.cms_plan_id AND sl.contract_id = plan_dim.contract_id LIMIT 1),
+        is_snp = (SELECT CASE WHEN sl.snp_type IS NOT NULL AND sl.snp_type != '' THEN 1 ELSE 0 END FROM staging_landscape sl WHERE sl.plan_id = plan_dim.cms_plan_id AND sl.contract_id = plan_dim.contract_id LIMIT 1)
+    WHERE EXISTS (SELECT 1 FROM staging_landscape sl WHERE sl.plan_id = plan_dim.cms_plan_id AND sl.contract_id = plan_dim.contract_id);
 
     -- 4. Insert landscape records (Premiums/Deductibles)
     INSERT OR REPLACE INTO landscape_records (plan_id, year, monthly_premium, deductible)
@@ -206,11 +207,12 @@ struct DBSchema {
     JOIN plan_dim p ON p.cms_plan_id = sl.plan_id AND p.contract_id = sl.contract_id;
 
     -- 5. Map Service Area (Counties offered)
+    -- Using a more flexible JOIN on county names to handle minor formatting differences
     INSERT OR IGNORE INTO plan_service_area (plan_id, county_id, year)
     SELECT DISTINCT p.plan_id, co.county_id, :year
     FROM staging_landscape sl
     JOIN plan_dim p ON p.cms_plan_id = sl.plan_id AND p.contract_id = sl.contract_id
-    JOIN county_dim co ON co.name = sl.county AND co.state = sl.state;
+    JOIN county_dim co ON (UPPER(co.name) = UPPER(sl.county) OR UPPER(co.name) || ' COUNTY' = UPPER(sl.county)) AND UPPER(co.state) = UPPER(sl.state);
     """
 
     static let momSQLExample: String = """
