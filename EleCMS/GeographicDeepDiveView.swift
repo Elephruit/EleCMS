@@ -4,6 +4,7 @@ import Charts
 struct GeographicDeepDiveView: View {
     let dataStore: DataStore
     @Binding var isMenuOpen: Bool
+    @Binding var selectedDestination: NavDestination
     
     @State private var availablePeriods: [Period] = []
     @State private var selectedPeriod: Period?
@@ -18,7 +19,6 @@ struct GeographicDeepDiveView: View {
     @State private var pdpIndividualMarket: SegmentStats = .empty
     
     @State private var carrierEnrollments: [EnrollmentByCarrier] = []
-    @State private var countyEnrollments: [EnrollmentByCountyByPlan] = []
     @State private var trendData: [TrendPoint] = []
     @State private var carrierTrendData: [CarrierTrendPoint] = []
     @State private var top5CarrierNames: [String] = []
@@ -29,6 +29,11 @@ struct GeographicDeepDiveView: View {
     @State private var stateSearchText = ""
     
     @State private var selectedSegment: MarketSegment = .total
+    
+    // Drill-down data
+    @State private var expandedCarrier: String? = nil
+    @State private var expandedType: String? = nil
+    @State private var carrierBreakdowns: [String: GeographicBreakdown] = [:]
     
     // Chart Interactions
     @State private var rawSelectedDate: Date?
@@ -66,7 +71,7 @@ struct GeographicDeepDiveView: View {
                         VStack(alignment: .leading, spacing: 32) {
                             stateSelector
                             
-                            if let state = selectedState {
+                            if selectedState != nil {
                                 periodPicker
                                 dashboardContent
                             } else {
@@ -135,8 +140,8 @@ struct GeographicDeepDiveView: View {
                             .font(.system(size: 16, weight: .bold))
                             .foregroundColor(.white)
                         
-                        if let state = selectedStateOption {
-                            Text("\(UIFormatter.compactFormat(state.enrollment)) total enrollment")
+                        if let stateOption = selectedStateOption {
+                            Text("\(UIFormatter.compactFormat(stateOption.enrollment)) total enrollment")
                                 .font(.caption).foregroundColor(.gray)
                         } else {
                             Text("Search states by volume").font(.caption).foregroundColor(.gray)
@@ -198,36 +203,151 @@ struct GeographicDeepDiveView: View {
             }
             .padding(.horizontal)
             
-            // Carrier List
+            // Expandable Carrier Table
             VStack(alignment: .leading, spacing: 16) {
                 CustomSectionHeader(title: "Carrier Performance in \(selectedStateName ?? "State")", subtitle: "\(UIFormatter.formatNumber(currentSegmentEnrollment)) Segment Total")
                 
                 VStack(spacing: 12) {
                     let maxEnroll = carrierEnrollments.map { $0.enrollment }.max() ?? 1
                     ForEach(Array(carrierEnrollments.enumerated()), id: \.element.id) { index, item in
-                        ModernCard {
-                            VStack(alignment: .leading, spacing: 10) {
-                                HStack {
-                                    Text("#\(index + 1) \(item.carrier)").font(.system(size: 14, weight: .bold)).foregroundColor(.white).lineLimit(1)
-                                    Spacer()
-                                    VStack(alignment: .trailing) {
-                                        Text(UIFormatter.compactFormat(item.enrollment)).font(.system(size: 15, weight: .black, design: .rounded)).foregroundColor(.white)
-                                        Text(String(format: "%.1f%%", currentSegmentEnrollment > 0 ? Double(item.enrollment) / Double(currentSegmentEnrollment) * 100 : 0)).font(.system(size: 9, weight: .bold)).foregroundColor(.gray)
-                                    }
-                                }
-                                GeometryReader { geo in
-                                    ZStack(alignment: .leading) {
-                                        RoundedRectangle(cornerRadius: 3).fill(Color.white.opacity(0.05)).frame(height: 6)
-                                        RoundedRectangle(cornerRadius: 3).fill(LinearGradient(colors: [.blue, .purple], startPoint: .leading, endPoint: .trailing)).frame(width: geo.size.width * CGFloat(item.enrollment) / CGFloat(maxEnroll), height: 6)
-                                    }
-                                }
-                                .frame(height: 6)
-                            }
-                        }
+                        carrierRow(index: index, item: item, maxEnroll: maxEnroll)
                     }
                 }
                 .padding(.horizontal)
             }
+        }
+    }
+    
+    @ViewBuilder
+    func carrierRow(index: Int, item: EnrollmentByCarrier, maxEnroll: Int) -> some View {
+        let isExpanded = expandedCarrier == item.carrier
+        
+        VStack(spacing: 0) {
+            Button(action: {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                    if isExpanded { expandedCarrier = nil; expandedType = nil }
+                    else { expandedCarrier = item.carrier; fetchCarrierBreakdown(item.carrier, enrollment: item.enrollment) }
+                }
+            }) {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text("#\(index + 1) \(item.carrier)").font(.system(size: 14, weight: .bold)).foregroundColor(.white).lineLimit(1)
+                        Spacer()
+                        VStack(alignment: .trailing) {
+                            Text(UIFormatter.compactFormat(item.enrollment)).font(.system(size: 15, weight: .black, design: .rounded)).foregroundColor(.white)
+                            Text(String(format: "%.1f%%", currentSegmentEnrollment > 0 ? Double(item.enrollment) / Double(currentSegmentEnrollment) * 100 : 0)).font(.system(size: 9, weight: .bold)).foregroundColor(.gray)
+                        }
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.gray)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    }
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            RoundedRectangle(cornerRadius: 3).fill(Color.white.opacity(0.05)).frame(height: 4)
+                            RoundedRectangle(cornerRadius: 3).fill(LinearGradient(colors: [.blue, .purple], startPoint: .leading, endPoint: .trailing)).frame(width: geo.size.width * CGFloat(item.enrollment) / CGFloat(maxEnroll), height: 4)
+                        }
+                    }
+                    .frame(height: 4)
+                }
+                .padding()
+                .background(AppColors.surface)
+                .cornerRadius(16)
+                .overlay(RoundedRectangle(cornerRadius: 16).stroke(isExpanded ? Color.blue.opacity(0.5) : Color.white.opacity(0.05), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            
+            if isExpanded {
+                if let breakdown = carrierBreakdowns[item.carrier] {
+                    VStack(spacing: 1) {
+                        ForEach(breakdown.types) { type in
+                            typeRow(type)
+                        }
+                    }
+                    .padding(.top, 8)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                } else {
+                    ProgressView().padding()
+                }
+            }
+        }
+    }
+    
+    @ViewBuilder
+    func typeRow(_ type: ProductTypeBreakdown) -> some View {
+        let isTypeExpanded = expandedType == type.id
+        
+        VStack(spacing: 0) {
+            Button(action: {
+                withAnimation(.spring()) {
+                    expandedType = isTypeExpanded ? nil : type.id
+                }
+            }) {
+                HStack(spacing: 12) {
+                    Image(systemName: "circle.fill").font(.system(size: 6)).foregroundColor(.blue)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(type.id.uppercased()).font(.system(size: 11, weight: .black)).foregroundColor(.white)
+                        Text(String(format: "%.1f%% of state segment", type.shareOfTotal * 100)).font(.system(size: 9)).foregroundColor(.gray)
+                    }
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(UIFormatter.formatNumber(type.enrollment)).font(.system(size: 13, weight: .bold, design: .rounded)).foregroundColor(.white)
+                        HStack(spacing: 8) {
+                            miniGrowth(label: "MOM", diff: type.momDiff, pct: type.momPct)
+                            miniGrowth(label: "YOY", diff: type.yoyDiff, pct: type.yoyPct)
+                        }
+                    }
+                    Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold)).foregroundColor(.gray).rotationEffect(.degrees(isTypeExpanded ? 90 : 0))
+                }
+                .padding()
+                .background(Color.white.opacity(0.03))
+            }
+            .buttonStyle(.plain)
+            
+            if isTypeExpanded {
+                VStack(spacing: 1) {
+                    ForEach(type.plans) { plan in
+                        planRow(plan)
+                    }
+                }
+                .transition(.opacity)
+            }
+        }
+    }
+    
+    @ViewBuilder
+    func planRow(_ plan: PlanBreakdown) -> some View {
+        Button(action: {
+            withAnimation(.spring()) {
+                selectedDestination = .planDeepDive(id: plan.id)
+            }
+        }) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(plan.name).font(.system(size: 11, weight: .semibold)).foregroundColor(.white.opacity(0.9)).lineLimit(1)
+                    Text(plan.id).font(.system(size: 9, weight: .bold, design: .monospaced)).foregroundColor(.gray)
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(UIFormatter.formatNumber(plan.enrollment)).font(.system(size: 11, weight: .bold, design: .rounded)).foregroundColor(.white)
+                    HStack(spacing: 8) {
+                        miniGrowth(label: "MOM", diff: plan.momDiff, pct: plan.momPct)
+                        miniGrowth(label: "YOY", diff: plan.yoyDiff, pct: plan.yoyPct)
+                    }
+                }
+            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 24)
+            .background(Color.white.opacity(0.01))
+        }
+        .buttonStyle(.plain)
+    }
+    
+    func miniGrowth(label: String, diff: Int, pct: Double) -> some View {
+        HStack(spacing: 2) {
+            Text(label).font(.system(size: 7, weight: .bold)).foregroundColor(.gray)
+            Text("\(diff >= 0 ? "+" : "")\(UIFormatter.compactFormat(diff))").font(.system(size: 8, weight: .bold)).foregroundColor(diff >= 0 ? .green : .red)
+            Text(String(format: "(%.1f%%)", pct)).font(.system(size: 8)).foregroundColor(diff >= 0 ? .green : .red)
         }
     }
     
@@ -314,16 +434,120 @@ struct GeographicDeepDiveView: View {
         }
     }
     
+    func fetchCarrierBreakdown(_ carrierName: String, enrollment: Int) {
+        guard let period = selectedPeriod, let state = selectedState else { return }
+        Task {
+            do {
+                let focusFilter = selectedSegment.sqlFilter
+                let pmID = try getPriorPeriodID(period)
+                let pyID = try getPriorYearPeriodID(period)
+                
+                let sql = """
+                    SELECT 
+                        p.type, 
+                        p.name as plan_name, 
+                        p.cms_plan_id, 
+                        p.contract_id,
+                        SUM(CASE WHEN e.period_id = \(period.id) THEN e.enrollment ELSE 0 END) as cur_e,
+                        SUM(CASE WHEN e.period_id = \(pmID ?? -1) THEN e.enrollment ELSE 0 END) as pm_e,
+                        SUM(CASE WHEN e.period_id = \(pyID ?? -1) THEN e.enrollment ELSE 0 END) as py_e
+                    FROM enrollment_records e
+                    JOIN plan_dim p ON p.plan_id = e.plan_id
+                    JOIN carrier_dim c ON c.carrier_id = p.carrier_id
+                    JOIN county_dim co ON co.county_id = e.county_id
+                    WHERE co.state = '\(state)' 
+                      AND c.name = ?
+                      AND e.period_id IN (\(period.id), \(pmID ?? -1), \(pyID ?? -1))
+                      \(focusFilter)
+                    GROUP BY p.type, p.plan_id
+                """
+                
+                let rows = try dataStore.database.query(sql: sql, arguments: [carrierName])
+                
+                var typeMap: [String: ProductTypeBreakdown] = [:]
+                let stateTotal = Double(currentSegmentEnrollment)
+                
+                for row in rows {
+                    let typeName = row["type"] as? String ?? "Other"
+                    let contractID = row["contract_id"] as? String ?? ""
+                    let cmsPlanID = row["cms_plan_id"] as? String ?? ""
+                    let planID = "\(contractID)-\(cmsPlanID)"
+                    let planName = row["plan_name"] as? String ?? "Unknown Plan"
+                    let curE = row["cur_e"] as? Int ?? 0
+                    let pmE = row["pm_e"] as? Int ?? 0
+                    let pyE = row["py_e"] as? Int ?? 0
+                    
+                    let planBreakdown = PlanBreakdown(
+                        id: planID,
+                        contractID: contractID,
+                        planID: cmsPlanID,
+                        name: planName,
+                        enrollment: curE,
+                        momDiff: curE - pmE,
+                        momPct: pmE > 0 ? (Double(curE - pmE) / Double(pmE)) * 100 : 0,
+                        yoyDiff: curE - pyE,
+                        yoyPct: pyE > 0 ? (Double(curE - pyE) / Double(pyE)) * 100 : 0,
+                        shareOfTotal: stateTotal > 0 ? Double(curE) / stateTotal : 0
+                    )
+                    
+                    var typeBreakdown = typeMap[typeName] ?? ProductTypeBreakdown(
+                        id: typeName, enrollment: 0, momDiff: 0, momPct: 0, yoyDiff: 0, yoyPct: 0, shareOfTotal: 0, plans: []
+                    )
+                    
+                    typeBreakdown.plans.append(planBreakdown)
+                    typeMap[typeName] = typeBreakdown
+                }
+                
+                let sortedTypes = typeMap.values.map { type -> ProductTypeBreakdown in
+                    let totalE = type.plans.reduce(0) { $0 + $1.enrollment }
+                    let totalPM = type.plans.reduce(0) { $0 + ($1.enrollment - $1.momDiff) }
+                    let totalPY = type.plans.reduce(0) { $0 + ($1.enrollment - $1.yoyDiff) }
+                    
+                    return ProductTypeBreakdown(
+                        id: type.id,
+                        enrollment: totalE,
+                        momDiff: totalE - totalPM,
+                        momPct: totalPM > 0 ? (Double(totalE - totalPM) / Double(totalPM)) * 100 : 0,
+                        yoyDiff: totalE - totalPY,
+                        yoyPct: totalPY > 0 ? (Double(totalE - totalPY) / Double(totalPY)) * 100 : 0,
+                        shareOfTotal: stateTotal > 0 ? Double(totalE) / stateTotal : 0,
+                        plans: type.plans.sorted(by: { $0.enrollment > $1.enrollment })
+                    )
+                }.sorted(by: { $0.enrollment > $1.enrollment })
+                
+                await MainActor.run {
+                    self.carrierBreakdowns[carrierName] = GeographicBreakdown(id: carrierName, enrollment: enrollment, types: sortedTypes)
+                }
+            } catch { print("Breakdown failed: \(error)") }
+        }
+    }
+    
+    private func getPriorPeriodID(_ p: Period) throws -> Int? {
+        let pm = p.month == 1 ? 12 : p.month - 1
+        let py = p.month == 1 ? p.year - 1 : p.year
+        let r = try dataStore.database.query(sql: "SELECT period_id FROM periods WHERE year = \(py) AND month = \(pm)")
+        return r.first?["period_id"] as? Int
+    }
+    
+    private func getPriorYearPeriodID(_ p: Period) throws -> Int? {
+        let r = try dataStore.database.query(sql: "SELECT period_id FROM periods WHERE year = \(p.year - 1) AND month = \(p.month)")
+        return r.first?["period_id"] as? Int
+    }
+    
     func fetchData() {
         guard let period = selectedPeriod, let state = selectedState else { return }
         isLoading = true
+        expandedCarrier = nil
+        expandedType = nil
+        carrierBreakdowns.removeAll()
+        
         Task {
             do {
                 let andClause = " AND co.state = '\(state)'"
                 let focusFilter = selectedSegment.sqlFilter
-                let wherePeriodFocus = " WHERE e.period_id = \(period.id)" + andClause + focusFilter
-                let whereTrendFocus = " WHERE co.state = '\(state)'" + focusFilter
-
+                let ytdDecID = try dataStore.database.query(sql: "SELECT period_id FROM periods WHERE year = \(period.year - 1) AND month = 12").first?["period_id"] as? Int
+                let pmID = try getPriorPeriodID(period)
+                
                 let segments = [
                     (name: "Total", segment: MarketSegment.total),
                     (name: "SNP", segment: MarketSegment.snp),
@@ -334,14 +558,11 @@ struct GeographicDeepDiveView: View {
                 ]
                 
                 var segmentResults: [String: SegmentStats] = [:]
-                let pm = period.month == 1 ? 12 : period.month - 1
-                let py = period.month == 1 ? period.year - 1 : period.year
-                
                 for seg in segments {
                     let sFilter = seg.segment.sqlFilter
                     let curSQL = "SELECT SUM(e.enrollment) as total FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN county_dim co ON co.county_id = e.county_id WHERE e.period_id = \(period.id) \(andClause) \(sFilter)"
-                    let pmSQL = "SELECT SUM(e.enrollment) as total FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN county_dim co ON co.county_id = e.county_id JOIN periods pe ON e.period_id = pe.period_id WHERE pe.year = \(py) AND pe.month = \(pm) \(andClause) \(sFilter)"
-                    let pdSQL = "SELECT SUM(e.enrollment) as total FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN county_dim co ON co.county_id = e.county_id JOIN periods pe ON e.period_id = pe.period_id WHERE pe.year = \(period.year - 1) AND pe.month = 12 \(andClause) \(sFilter)"
+                    let pmSQL = "SELECT SUM(e.enrollment) as total FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN county_dim co ON co.county_id = e.county_id WHERE e.period_id = \(pmID ?? -1) \(andClause) \(sFilter)"
+                    let pdSQL = "SELECT SUM(e.enrollment) as total FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN county_dim co ON co.county_id = e.county_id WHERE e.period_id = \(ytdDecID ?? -1) \(andClause) \(sFilter)"
                     
                     let curT = (try dataStore.database.query(sql: curSQL)).first?["total"] as? Int ?? 0
                     let pmT = (try dataStore.database.query(sql: pmSQL)).first?["total"] as? Int ?? 0
@@ -355,17 +576,17 @@ struct GeographicDeepDiveView: View {
                     segmentResults[seg.name] = stats
                 }
 
-                let trendRows = try dataStore.database.query(sql: "SELECT pe.year, pe.month, SUM(e.enrollment) as total FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN county_dim co ON co.county_id = e.county_id JOIN periods pe ON e.period_id = pe.period_id \(whereTrendFocus) GROUP BY pe.period_id, pe.year, pe.month ORDER BY pe.year ASC, pe.month ASC")
+                let trendRows = try dataStore.database.query(sql: "SELECT pe.year, pe.month, SUM(e.enrollment) as total FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN county_dim co ON co.county_id = e.county_id JOIN periods pe ON e.period_id = pe.period_id WHERE co.state = '\(state)' \(focusFilter) GROUP BY pe.period_id, pe.year, pe.month ORDER BY pe.year ASC, pe.month ASC")
                 let trend = trendRows.map { TrendPoint(year: $0["year"] as? Int ?? 0, month: $0["month"] as? Int ?? 0, enrollment: $0["total"] as? Int ?? 0) }
 
-                let carrierRows = try dataStore.database.query(sql: "SELECT c.name as carrier, SUM(e.enrollment) as total FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN carrier_dim c ON c.carrier_id = p.carrier_id JOIN county_dim co ON co.county_id = e.county_id \(wherePeriodFocus) GROUP BY c.carrier_id ORDER BY total DESC LIMIT 20")
+                let carrierRows = try dataStore.database.query(sql: "SELECT c.name as carrier, SUM(e.enrollment) as total FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN carrier_dim c ON c.carrier_id = p.carrier_id JOIN county_dim co ON co.county_id = e.county_id WHERE e.period_id = \(period.id) \(andClause) \(focusFilter) GROUP BY c.carrier_id ORDER BY total DESC LIMIT 20")
                 let carriers = carrierRows.map { EnrollmentByCarrier(carrier: $0["carrier"] as? String ?? "Unknown", enrollment: $0["total"] as? Int ?? 0) }
                 
                 let top5Names = Array(carriers.prefix(5)).map { $0.carrier }
                 var carrierTrend: [CarrierTrendPoint] = []
                 if !top5Names.isEmpty {
                     let carrierList = top5Names.map { "'\($0.replacingOccurrences(of: "'", with: "''"))'" }.joined(separator: ",")
-                    let ctSQL = "SELECT c.name as carrier, pe.year, pe.month, SUM(e.enrollment) as total FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN carrier_dim c ON c.carrier_id = p.carrier_id JOIN county_dim co ON co.county_id = e.county_id JOIN periods pe ON e.period_id = pe.period_id \(whereTrendFocus) AND c.name IN (\(carrierList)) GROUP BY c.name, pe.period_id, pe.year, pe.month ORDER BY pe.year ASC, pe.month ASC"
+                    let ctSQL = "SELECT c.name as carrier, pe.year, pe.month, SUM(e.enrollment) as total FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN carrier_dim c ON c.carrier_id = p.carrier_id JOIN county_dim co ON co.county_id = e.county_id JOIN periods pe ON e.period_id = pe.period_id WHERE co.state = '\(state)' \(focusFilter) AND c.name IN (\(carrierList)) GROUP BY c.name, pe.period_id, pe.year, pe.month ORDER BY pe.year ASC, pe.month ASC"
                     let ctRows = try dataStore.database.query(sql: ctSQL)
                     carrierTrend = ctRows.map { CarrierTrendPoint(carrier: $0["carrier"] as? String ?? "", year: $0["year"] as? Int ?? 0, month: $0["month"] as? Int ?? 0, enrollment: $0["total"] as? Int ?? 0) }
                 }

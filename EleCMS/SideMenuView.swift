@@ -4,6 +4,7 @@ enum NavDestination: Hashable {
     case marketOverview
     case geographicDeepDive
     case carrierDeepDive
+    case planDeepDive(id: String? = nil)
     case dataCatalog
     case settings
 }
@@ -41,6 +42,7 @@ struct SideMenuView: View {
                     menuItem(title: "Market Overview", icon: "chart.pie", destination: .marketOverview)
                     menuItem(title: "Geographic Deep-dive", icon: "map", destination: .geographicDeepDive)
                     menuItem(title: "Carrier Deep-dive", icon: "building.2", destination: .carrierDeepDive)
+                    menuItem(title: "Plan Deep-dive", icon: "doc.text.magnifyingglass", destination: .planDeepDive())
                     
                     Divider()
                         .background(Color.white.opacity(0.1))
@@ -58,7 +60,7 @@ struct SideMenuView: View {
                     Text("Powered by CMS CPSC & Landscape")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundColor(.white.opacity(0.3))
-                    Text("Version 3.0.0")
+                    Text("Version 3.1.0")
                         .font(.system(size: 10))
                         .foregroundColor(.white.opacity(0.2))
                 }
@@ -68,7 +70,20 @@ struct SideMenuView: View {
     }
     
     func menuItem(title: String, icon: String, destination: NavDestination) -> some View {
-        Button(action: {
+        let isSelected: Bool
+        switch (selectedDestination, destination) {
+        case (.marketOverview, .marketOverview),
+             (.geographicDeepDive, .geographicDeepDive),
+             (.carrierDeepDive, .carrierDeepDive),
+             (.planDeepDive, .planDeepDive),
+             (.dataCatalog, .dataCatalog),
+             (.settings, .settings):
+            isSelected = true
+        default:
+            isSelected = false
+        }
+        
+        return Button(action: {
             withAnimation(.spring()) {
                 isMenuOpen = false
             }
@@ -80,18 +95,18 @@ struct SideMenuView: View {
             HStack(spacing: 16) {
                 Image(systemName: icon)
                     .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(selectedDestination == destination ? .blue : .gray)
+                    .foregroundColor(isSelected ? .blue : .gray)
                     .frame(width: 24)
                 
                 Text(title)
                     .font(.system(size: 16, weight: .bold))
-                    .foregroundColor(selectedDestination == destination ? .white : .gray)
+                    .foregroundColor(isSelected ? .white : .gray)
                 
                 Spacer()
             }
             .padding(.vertical, 12)
             .padding(.horizontal, 16)
-            .background(selectedDestination == destination ? Color.blue.opacity(0.15) : Color.clear)
+            .background(isSelected ? Color.blue.opacity(0.15) : Color.clear)
             .cornerRadius(12)
         }
     }

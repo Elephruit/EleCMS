@@ -87,6 +87,8 @@ final class IngestionService {
                 let clean = h.trimmingCharacters(in: .init(charactersIn: "\" ")).lowercased()
                 if (clean.contains("contract") && clean.contains("id")) || (clean == "contract id") { tempMapping["contract_id"] = i; foundKeyColumn = true }
                 else if (clean.contains("plan") && clean.contains("id")) || (clean == "plan id") { tempMapping["plan_id"] = i; foundKeyColumn = true }
+                else if clean == "state" { tempMapping["state"] = i }
+                else if clean == "county" { tempMapping["county"] = i }
                 else if clean.contains("organization") && clean.contains("name") { tempMapping["carrier_name"] = i }
                 else if clean.contains("plan") && clean.contains("name") { tempMapping["plan_name"] = i }
                 else if clean.contains("plan") && clean.contains("type") { tempMapping["plan_type"] = i }
@@ -101,10 +103,10 @@ final class IngestionService {
 
     private func fastBareMetalStream(url: URL, table: String, mapping: [String: Int], filterEnrollment: Bool, skipRows: Int) throws {
         let cols: [String] = table == "staging_enrollment" 
-            ? ["contract_id", "plan_id", "state", "county", "enrollment"]
+            ? ["contract_id", "plan_id", "ssa_county_code", "fips_county_code", "state", "county", "enrollment"]
             : (table == "staging_contracts" 
                 ? ["contract_id", "plan_id", "organization_type", "plan_type", "offers_part_d", "organization_name", "organization_marketing_name", "plan_name", "parent_organization", "contract_effective_date", "is_snp", "is_egwp"]
-                : ["contract_id", "plan_id", "carrier_name", "plan_name", "plan_type", "monthly_premium", "deductible", "snp_type"])
+                : ["contract_id", "plan_id", "state", "county", "carrier_name", "plan_name", "plan_type", "monthly_premium", "deductible", "snp_type"])
 
         let colIndices = cols.map { mapping[$0] ?? -1 }
         let data = try Data(contentsOf: url, options: .mappedIfSafe)
@@ -198,6 +200,8 @@ final class IngestionService {
             let c = h.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             if c.contains("contract") && (c.contains("number") || c.contains("id")) { mapping["contract_id"] = i }
             else if c.contains("plan") && (c.contains("id") || c.contains("pbp")) { mapping["plan_id"] = i }
+            else if c.contains("ssa") && c.contains("county") && c.contains("code") { mapping["ssa_county_code"] = i }
+            else if c.contains("fips") && c.contains("county") && c.contains("code") { mapping["fips_county_code"] = i }
             else if cleanHeader(c) == "state" { mapping["state"] = i }
             else if cleanHeader(c) == "county" { mapping["county"] = i }
             else if cleanHeader(c) == "enrollment" { mapping["enrollment"] = i }
@@ -242,8 +246,4 @@ final class IngestionService {
         }
         res.append(cur); return res
     }
-}
-
-extension SQLiteDatabase {
-    var dbPointer: OpaquePointer? { return Mirror(reflecting: self).descendant("db") as? OpaquePointer }
 }

@@ -46,16 +46,12 @@ struct Period: Identifiable, Hashable {
     let month: Int
     
     var name: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMMM"
-        let monthName = formatter.monthSymbols[month - 1]
+        let monthName = DateFormatter().monthSymbols[month - 1]
         return "\(monthName) \(year)"
     }
     
     var shortName: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMM"
-        let monthName = formatter.shortMonthSymbols[month - 1]
+        let monthName = DateFormatter().shortMonthSymbols[month - 1]
         return "\(monthName) '\(year % 100)"
     }
 }
@@ -111,4 +107,43 @@ struct StateHelper {
     static func fullName(for abbrev: String) -> String {
         return map[abbrev.uppercased()] ?? abbrev
     }
+}
+
+// MARK: - Drill-down Models
+
+struct GeographicBreakdown: Identifiable {
+    let id: String // Carrier Name
+    let enrollment: Int
+    var types: [ProductTypeBreakdown] = []
+}
+
+struct ProductTypeBreakdown: Identifiable {
+    let id: String // Type Name
+    let enrollment: Int
+    let momDiff: Int
+    let momPct: Double
+    let yoyDiff: Int
+    let yoyPct: Double
+    let shareOfTotal: Double
+    var plans: [PlanBreakdown] = []
+}
+
+struct PlanBreakdown: Identifiable {
+    let id: String // contract_id-plan_id
+    let contractID: String
+    let planID: String
+    let name: String
+    let enrollment: Int
+    let momDiff: Int
+    let momPct: Double
+    let yoyDiff: Int
+    let yoyPct: Double
+    let shareOfTotal: Double
+}
+
+struct PlanOption: Identifiable, Equatable {
+    let id: String // contract_id-plan_id
+    let name: String
+    let carrier: String
+    let enrollment: Int
 }

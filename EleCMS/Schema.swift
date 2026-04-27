@@ -40,6 +40,8 @@ struct DBSchema {
     CREATE TABLE IF NOT EXISTS staging_landscape (
         contract_id TEXT,
         plan_id TEXT,
+        state TEXT,
+        county TEXT,
         carrier_name TEXT,
         plan_name TEXT,
         plan_type TEXT,
@@ -77,7 +79,7 @@ struct DBSchema {
         UNIQUE(name, state, ssa_county_code, fips_county_code)
     );
 
-    -- Fact Table
+    -- Fact Tables
     CREATE TABLE IF NOT EXISTS enrollment_records (
         plan_id INTEGER NOT NULL,
         county_id INTEGER NOT NULL,
@@ -95,6 +97,16 @@ struct DBSchema {
         deductible REAL,
         PRIMARY KEY (plan_id, year),
         FOREIGN KEY (plan_id) REFERENCES plan_dim(plan_id)
+    ) WITHOUT ROWID;
+
+    -- Map table for service areas (from landscape)
+    CREATE TABLE IF NOT EXISTS plan_service_area (
+        plan_id INTEGER NOT NULL,
+        county_id INTEGER NOT NULL,
+        year INTEGER NOT NULL,
+        PRIMARY KEY (plan_id, county_id, year),
+        FOREIGN KEY (plan_id) REFERENCES plan_dim(plan_id),
+        FOREIGN KEY (county_id) REFERENCES county_dim(county_id)
     ) WITHOUT ROWID;
 
     CREATE TABLE IF NOT EXISTS periods (
@@ -169,13 +181,21 @@ struct DBSchema {
     """
 
     static let mergeLandscapeToFinal: String = """
-    -- Update snp_type for plans from landscape data
+    -- 1. Sync Counties from Landscape (In case they weren't in enrollment)
+    INSERT OR IGNORE INTO county_dim (name, state)
+    SELECT DISTINCT county, state FROM staging_landscape WHERE county IS NOT NULL AND state IS NOT NULL;
+
+    -- 2. Sync Plans from Landscape
+    INSERT OR IGNORE INTO plan_dim (cms_plan_id, contract_id)
+    SELECT DISTINCT plan_id, contract_id FROM staging_landscape;
+
+    -- 3. Update snp_type for plans from landscape data
     UPDATE plan_dim SET
         snp_type = (SELECT sl.snp_type FROM staging_landscape sl WHERE sl.plan_id = plan_dim.cms_plan_id AND sl.contract_id = plan_dim.contract_id),
         is_snp = 1
     WHERE EXISTS (SELECT 1 FROM staging_landscape sl WHERE sl.plan_id = plan_dim.cms_plan_id AND sl.contract_id = plan_dim.contract_id AND sl.snp_type IS NOT NULL AND sl.snp_type != '');
 
-    -- Insert landscape records
+    -- 4. Insert landscape records (Premiums/Deductibles)
     INSERT OR REPLACE INTO landscape_records (plan_id, year, monthly_premium, deductible)
     SELECT 
         p.plan_id,
@@ -184,6 +204,13 @@ struct DBSchema {
         CAST(REPLACE(REPLACE(sl.deductible, '$', ''), ',', '') AS REAL)
     FROM staging_landscape sl
     JOIN plan_dim p ON p.cms_plan_id = sl.plan_id AND p.contract_id = sl.contract_id;
+
+    -- 5. Map Service Area (Counties offered)
+    INSERT OR IGNORE INTO plan_service_area (plan_id, county_id, year)
+    SELECT DISTINCT p.plan_id, co.county_id, :year
+    FROM staging_landscape sl
+    JOIN plan_dim p ON p.cms_plan_id = sl.plan_id AND p.contract_id = sl.contract_id
+    JOIN county_dim co ON co.name = sl.county AND co.state = sl.state;
     """
 
     static let momSQLExample: String = """

@@ -14,9 +14,11 @@ struct MainContainerView: View {
                 case .marketOverview:
                     DashboardView(dataStore: dataStore, isMenuOpen: $isMenuOpen)
                 case .geographicDeepDive:
-                    GeographicDeepDiveView(dataStore: dataStore, isMenuOpen: $isMenuOpen)
+                    GeographicDeepDiveView(dataStore: dataStore, isMenuOpen: $isMenuOpen, selectedDestination: $selectedDestination)
                 case .carrierDeepDive:
                     CarrierDeepDiveView(dataStore: dataStore, isMenuOpen: $isMenuOpen)
+                case .planDeepDive(let planID):
+                    PlanDetailView(dataStore: dataStore, isMenuOpen: $isMenuOpen, planID: planID)
                 case .dataCatalog:
                     DataManagementView(dataStore: dataStore, isMenuOpen: $isMenuOpen)
                 case .settings:
