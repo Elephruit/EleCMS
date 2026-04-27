@@ -6,6 +6,7 @@ final class EleDatabaseFactory {
         try db.execute(sql: DBSchema.pragmas)
         try db.execute(sql: DBSchema.createTables)
         try migrateCountyIdentityIfNeeded(db)
+        try db.execute(sql: DBSchema.createIndexes)
         
         // Simple migration: Add columns to plan_dim if they don't exist
         try? db.execute(sql: "ALTER TABLE plan_dim ADD COLUMN is_snp INTEGER DEFAULT 0;")

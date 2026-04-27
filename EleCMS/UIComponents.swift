@@ -44,20 +44,21 @@ struct EnrollmentMetricCard: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(title.uppercased())
-                    .font(.system(size: 8, weight: .black))
+                    .font(.system(size: 10, weight: .black))
                     .foregroundColor(isSelected ? .white : .blue.opacity(0.8))
                     .kerning(0.5)
+                    .minimumScaleFactor(0.7)
                     .lineLimit(1)
                 Text(UIFormatter.formatNumber(enrollment))
-                    .font(.system(size: 14, weight: .black, design: .rounded))
+                    .font(.system(size: 22, weight: .black, design: .rounded))
                     .foregroundColor(.white)
-                    .minimumScaleFactor(0.5)
+                    .minimumScaleFactor(0.4)
                     .lineLimit(1)
             }
             
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 if let diff = momDiff, let pct = momPct {
                     growthMiniMetric(label: "MoM", diff: diff, pct: pct)
                 }
@@ -69,31 +70,29 @@ struct EnrollmentMetricCard: View {
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 16)
+            RoundedRectangle(cornerRadius: 14)
                 .fill(isSelected ? Color.blue.opacity(0.15) : AppColors.surface)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 16)
+            RoundedRectangle(cornerRadius: 14)
                 .stroke(isSelected ? Color.blue : Color.white.opacity(0.05), lineWidth: isSelected ? 2 : 1)
         )
         .shadow(color: isSelected ? Color.blue.opacity(0.3) : Color.clear, radius: 10, x: 0, y: 0)
     }
     
     func growthMiniMetric(label: String, diff: Int, pct: Double) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 1) {
             Text(label)
-                .font(.system(size: 7, weight: .bold))
+                .font(.system(size: 14, weight: .bold))
                 .foregroundColor(.gray)
-            HStack(spacing: 2) {
-                Text("\(diff >= 0 ? "+" : "")\(UIFormatter.formatNumber(diff))")
-                    .font(.system(size: 9, weight: .bold, design: .rounded))
-                Text("|")
-                    .font(.system(size: 8))
-                    .foregroundColor(.white.opacity(0.2))
-                Text(String(format: "%.1f%%", pct))
-                    .font(.system(size: 8, weight: .medium))
+            HStack(spacing: 4) {
+                Text("\(diff >= 0 ? "+" : "")\(UIFormatter.compactFormat(diff))")
+                    .font(.system(size: 14, weight: .black, design: .rounded))
+                Text(String(format: "%.0f%%", pct))
+                    .font(.system(size: 14, weight: .bold))
             }
             .foregroundColor(diff >= 0 ? .green : .red)
+            .lineLimit(1)
         }
     }
 }
@@ -104,6 +103,7 @@ struct MarketTrendChart: View {
     let trendData: [TrendPoint]
     @Binding var rawSelectedDate: Date?
     let chartDomain: ClosedRange<Int>
+    var chartHeight: CGFloat = 220
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -140,7 +140,7 @@ struct MarketTrendChart: View {
                             AxisValueLabel { if let intVal = value.as(Int.self) { Text(UIFormatter.compactFormat(intVal)) } }
                         }
                     }
-                    .frame(height: 220)
+                    .frame(height: chartHeight)
                     .overlay(alignment: .topTrailing) {
                         if let snapped = snappedDate, let point = trendData.first(where: { Calendar.current.isDate($0.date, inSameDayAs: snapped) }) {
                             ChartTooltip(date: snapped, label: "Market Volume", value: point.enrollment)

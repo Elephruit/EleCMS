@@ -47,7 +47,9 @@ struct DBSchema {
         plan_type TEXT,
         monthly_premium TEXT,
         deductible TEXT,
-        snp_type TEXT
+        snp_type TEXT,
+        ssa_county_code TEXT,
+        fips_county_code TEXT
     );
 
     -- Final Dimensions
@@ -115,6 +117,15 @@ struct DBSchema {
         month INTEGER NOT NULL,
         UNIQUE(year, month)
     );
+
+    """
+
+    static let createIndexes: String = """
+    CREATE INDEX IF NOT EXISTS idx_county_fips ON county_dim(fips_county_code) WHERE fips_county_code != '';
+    CREATE INDEX IF NOT EXISTS idx_county_ssa ON county_dim(ssa_county_code) WHERE ssa_county_code != '';
+    CREATE INDEX IF NOT EXISTS idx_county_name_state_nocase ON county_dim(name COLLATE NOCASE, state COLLATE NOCASE);
+    CREATE INDEX IF NOT EXISTS idx_plan_service_area_plan_year ON plan_service_area(plan_id, year);
+    CREATE INDEX IF NOT EXISTS idx_landscape_records_year_plan ON landscape_records(year, plan_id);
     """
 
     static let mergeStagingToFinal: String = """
@@ -182,8 +193,14 @@ struct DBSchema {
 
     static let mergeLandscapeToFinal: String = """
     -- 1. Sync Counties from Landscape (In case they weren't in enrollment)
-    INSERT OR IGNORE INTO county_dim (name, state)
-    SELECT DISTINCT county, state FROM staging_landscape WHERE county IS NOT NULL AND state IS NOT NULL;
+    INSERT OR IGNORE INTO county_dim (name, state, ssa_county_code, fips_county_code)
+    SELECT DISTINCT
+        COALESCE(county, ''),
+        COALESCE(state, ''),
+        COALESCE(ssa_county_code, ''),
+        COALESCE(fips_county_code, '')
+    FROM staging_landscape
+    WHERE county IS NOT NULL AND state IS NOT NULL;
 
     -- 2. Sync Plans from Landscape
     INSERT OR IGNORE INTO plan_dim (cms_plan_id, contract_id)
@@ -201,18 +218,39 @@ struct DBSchema {
     SELECT 
         p.plan_id,
         :year,
-        CAST(REPLACE(REPLACE(sl.monthly_premium, '$', ''), ',', '') AS REAL),
-        CAST(REPLACE(REPLACE(sl.deductible, '$', ''), ',', '') AS REAL)
+        MAX(CAST(REPLACE(REPLACE(sl.monthly_premium, '$', ''), ',', '') AS REAL)),
+        MAX(CAST(REPLACE(REPLACE(sl.deductible, '$', ''), ',', '') AS REAL))
     FROM staging_landscape sl
-    JOIN plan_dim p ON p.cms_plan_id = sl.plan_id AND p.contract_id = sl.contract_id;
+    JOIN plan_dim p ON p.cms_plan_id = sl.plan_id AND p.contract_id = sl.contract_id
+    GROUP BY p.plan_id;
 
     -- 5. Map Service Area (Counties offered)
-    -- Using a more flexible JOIN on county names to handle minor formatting differences
+    -- Multi-pass merge to keep it fast (Index-friendly)
+
+    -- Pass 1: FIPS Match (Highest accuracy)
     INSERT OR IGNORE INTO plan_service_area (plan_id, county_id, year)
     SELECT DISTINCT p.plan_id, co.county_id, :year
     FROM staging_landscape sl
     JOIN plan_dim p ON p.cms_plan_id = sl.plan_id AND p.contract_id = sl.contract_id
-    JOIN county_dim co ON (UPPER(co.name) = UPPER(sl.county) OR UPPER(co.name) || ' COUNTY' = UPPER(sl.county)) AND UPPER(co.state) = UPPER(sl.state);
+    JOIN county_dim co ON co.fips_county_code = sl.fips_county_code
+    WHERE sl.fips_county_code != '';
+
+    -- Pass 2: SSA Match
+    INSERT OR IGNORE INTO plan_service_area (plan_id, county_id, year)
+    SELECT DISTINCT p.plan_id, co.county_id, :year
+    FROM staging_landscape sl
+    JOIN plan_dim p ON p.cms_plan_id = sl.plan_id AND p.contract_id = sl.contract_id
+    JOIN county_dim co ON co.ssa_county_code = sl.ssa_county_code
+    WHERE sl.ssa_county_code != '';
+
+    -- Pass 3: Name/State Match (Fallback)
+    INSERT OR IGNORE INTO plan_service_area (plan_id, county_id, year)
+    SELECT DISTINCT p.plan_id, co.county_id, :year
+    FROM staging_landscape sl
+    JOIN plan_dim p ON p.cms_plan_id = sl.plan_id AND p.contract_id = sl.contract_id
+    JOIN county_dim co
+        ON co.name = sl.county COLLATE NOCASE
+        AND co.state = sl.state COLLATE NOCASE;
     """
 
     static let momSQLExample: String = """

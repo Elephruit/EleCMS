@@ -60,6 +60,9 @@ final class IngestionService {
         
         // Ensure table exists but DON'T drop it if it's a batch load
         try store.database.execute(sql: DBSchema.createTables)
+        try store.database.execute(sql: DBSchema.createIndexes)
+        try? store.database.execute(sql: "ALTER TABLE staging_landscape ADD COLUMN ssa_county_code TEXT;")
+        try? store.database.execute(sql: "ALTER TABLE staging_landscape ADD COLUMN fips_county_code TEXT;")
         
         let (mapping, headerRowIndex) = try await detectLandscapeColumns(url: url)
         if mapping.isEmpty { 
@@ -76,6 +79,8 @@ final class IngestionService {
         try store.database.execute(sql: """
             CREATE INDEX IF NOT EXISTS idx_stg_land_join ON staging_landscape(plan_id, contract_id);
             CREATE INDEX IF NOT EXISTS idx_stg_land_geo ON staging_landscape(county, state);
+            CREATE INDEX IF NOT EXISTS idx_stg_land_fips ON staging_landscape(fips_county_code, plan_id, contract_id);
+            CREATE INDEX IF NOT EXISTS idx_stg_land_ssa ON staging_landscape(ssa_county_code, plan_id, contract_id);
         """)
         Logger.log("DEBUG: [Landscape] Indexing took \(Date().timeIntervalSince(idxStart))s")
 
@@ -106,7 +111,7 @@ final class IngestionService {
             var tempMapping: [String: Int] = [:]
             var foundKeyColumn = false
             for (i, h) in headers.enumerated() {
-                let clean = h.trimmingCharacters(in: .init(charactersIn: "\" ")).lowercased()
+                let clean = h.trimmingCharacters(in: .init(charactersIn: "\u{feff}\" ")).lowercased()
                 
                 if (clean.contains("contract") && clean.contains("id")) || (clean == "contract id") || (clean == "contract number") { 
                     tempMapping["contract_id"] = i; foundKeyColumn = true 
@@ -114,7 +119,15 @@ final class IngestionService {
                 else if (clean.contains("plan") && clean.contains("id")) || (clean == "plan id") || (clean == "pbp") { 
                     tempMapping["plan_id"] = i; foundKeyColumn = true 
                 }
-                else if clean == "state" || clean.contains("state name") { tempMapping["state"] = i }
+                else if clean == "state"
+                    || clean.contains("state abbreviation")
+                    || clean.contains("state territory abbreviation") {
+                    tempMapping["state"] = i
+                }
+                else if tempMapping["state"] == nil
+                    && (clean.contains("state name") || clean.contains("state territory name")) {
+                    tempMapping["state"] = i
+                }
                 else if clean == "county" || clean.contains("county name") { tempMapping["county"] = i }
                 else if clean.contains("organization") && clean.contains("name") { tempMapping["carrier_name"] = i }
                 else if clean.contains("plan") && clean.contains("name") { tempMapping["plan_name"] = i }
@@ -122,6 +135,8 @@ final class IngestionService {
                 else if clean.contains("consolidated") && clean.contains("premium") { tempMapping["monthly_premium"] = i }
                 else if clean.contains("deductible") { tempMapping["deductible"] = i }
                 else if clean == "snp type" || clean.contains("snp type") { tempMapping["snp_type"] = i }
+                else if clean.contains("ssa") && clean.contains("county") && clean.contains("code") { tempMapping["ssa_county_code"] = i }
+                else if clean.contains("fips") && clean.contains("county") && clean.contains("code") { tempMapping["fips_county_code"] = i }
             }
             if foundKeyColumn && tempMapping["contract_id"] != nil { 
                 Logger.log("DEBUG: [Landscape] Detected headers at row \(rowIndex)")
@@ -136,7 +151,7 @@ final class IngestionService {
             ? ["contract_id", "plan_id", "ssa_county_code", "fips_county_code", "state", "county", "enrollment"]
             : (table == "staging_contracts" 
                 ? ["contract_id", "plan_id", "organization_type", "plan_type", "offers_part_d", "organization_name", "organization_marketing_name", "plan_name", "parent_organization", "contract_effective_date", "is_snp", "is_egwp"]
-                : ["contract_id", "plan_id", "state", "county", "carrier_name", "plan_name", "plan_type", "monthly_premium", "deductible", "snp_type"])
+                : ["contract_id", "plan_id", "state", "county", "carrier_name", "plan_name", "plan_type", "monthly_premium", "deductible", "snp_type", "ssa_county_code", "fips_county_code"])
 
         let colIndices = cols.map { mapping[$0] ?? -1 }
         let data = try Data(contentsOf: url, options: .mappedIfSafe)

@@ -3,6 +3,7 @@ import MapKit
 
 struct CountyMapView: View {
     let footprintFIPS: Set<String>
+    let footprintCounties: Set<CountyMapCounty>
     let states: Set<String>
     
     // Static cache to avoid reloading and re-parsing GeoJSON multiple times
@@ -12,6 +13,14 @@ struct CountyMapView: View {
     @State private var countyFeatures: [CountyFeature] = []
     @State private var isLoading = false
     @State private var boundingBox: MKMapRect?
+
+    private var normalizedFootprintFIPS: Set<String> {
+        Set(footprintFIPS.compactMap { CountyMapView.normalizedFIPS($0) })
+    }
+
+    private var normalizedFootprintCounties: Set<CountyMapCounty> {
+        Set(footprintCounties.map { $0.normalized })
+    }
     
     var body: some View {
         GeometryReader { geo in
@@ -23,9 +32,12 @@ struct CountyMapView: View {
                 } else if let box = boundingBox, !countyFeatures.isEmpty {
                     Canvas { context, size in
                         let scale = calculateScale(for: box, in: size)
+                        let activeFIPS = normalizedFootprintFIPS
+                        let activeCounties = normalizedFootprintCounties
                         
                         for feature in countyFeatures {
-                            let isServiceArea = footprintFIPS.contains(feature.fips)
+                            let isServiceArea = activeFIPS.contains(feature.fips)
+                                || activeCounties.contains(feature.identity)
                             
                             for polygon in feature.polygons {
                                 var path = Path()
@@ -61,6 +73,8 @@ struct CountyMapView: View {
         }
         .task { await loadAndFilter() }
         .onChange(of: states) { _ in Task { await loadAndFilter() } }
+        .onChange(of: footprintFIPS) { _ in Task { await loadAndFilter() } }
+        .onChange(of: footprintCounties) { _ in Task { await loadAndFilter() } }
     }
     
     private func project(_ coord: CLLocationCoordinate2D, box: MKMapRect, size: CGSize, scale: Double) -> CGPoint {
@@ -78,7 +92,7 @@ struct CountyMapView: View {
     }
     
     private func loadAndFilter() async {
-        guard !states.isEmpty else { 
+        guard !footprintFIPS.isEmpty || !footprintCounties.isEmpty || !states.isEmpty else {
             await MainActor.run { 
                 self.countyFeatures = []
                 self.boundingBox = nil
@@ -103,7 +117,11 @@ struct CountyMapView: View {
             }
             
             guard let geoJSON = CountyMapView.cachedGeoJSON else { return }
-            let activeStateFIPS = StateFIPS.getFIPS(for: states)
+            let normalizedFootprint = Set(footprintFIPS.compactMap { CountyMapView.normalizedFIPS($0) })
+            let countyFootprint = normalizedFootprintCounties
+            let activeStateFIPS = normalizedFootprint.isEmpty
+                ? StateFIPS.getFIPS(for: states).union(Set(countyFootprint.compactMap { StateFIPS.getFIPS(for: $0.state) }))
+                : Set(normalizedFootprint.map { String($0.prefix(2)) })
             
             var features: [CountyFeature] = []
             var combinedRect = MKMapRect.null
@@ -114,7 +132,6 @@ struct CountyMapView: View {
                 
                 if let county = CountyFeature(from: feature) {
                     features.append(county)
-                    // Expand bounding box only for features we are drawing
                     for polygon in county.polygons {
                         for coord in polygon {
                             let point = MKMapPoint(coord)
@@ -140,6 +157,19 @@ struct CountyMapView: View {
             isLoading = false
         }
     }
+
+    private static func normalizedFIPS(_ value: String) -> String? {
+        let digits = String(value.filter { $0.isNumber })
+        guard !digits.isEmpty else { return nil }
+        return String(digits.suffix(5)).leftPadding(toLength: 5, withPad: "0")
+    }
+}
+
+private extension String {
+    func leftPadding(toLength: Int, withPad character: Character) -> String {
+        guard count < toLength else { return self }
+        return String(repeating: String(character), count: toLength - count) + self
+    }
 }
 
 // MARK: - Models (Keeping them in the same file for now)
@@ -147,10 +177,18 @@ struct CountyMapView: View {
 struct CountyFeature: Identifiable {
     var id: String { fips }
     let fips: String
+    let name: String
+    let stateFIPS: String
     let polygons: [[CLLocationCoordinate2D]]
+
+    var identity: CountyMapCounty {
+        CountyMapCounty(state: stateFIPS, name: name).normalized
+    }
     
     init?(from feature: GeoJSON.Feature) {
         self.fips = feature.id
+        self.name = feature.properties.name
+        self.stateFIPS = feature.properties.state
         var polys: [[CLLocationCoordinate2D]] = []
         if feature.geometry.type == "Polygon" {
             for ring in feature.geometry.coordinates {
@@ -170,7 +208,31 @@ struct GeoJSON: Decodable {
     let features: [Feature]
     struct Feature: Decodable {
         let id: String
+        let properties: Properties
         let geometry: Geometry
+    }
+    struct Properties: Decodable {
+        let name: String
+        let state: String
+
+        struct DynamicKey: CodingKey {
+            let stringValue: String
+            let intValue: Int? = nil
+
+            init?(stringValue: String) {
+                self.stringValue = stringValue
+            }
+
+            init?(intValue: Int) {
+                return nil
+            }
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: DynamicKey.self)
+            self.name = container.stringValue(for: ["NAME", "name"]) ?? ""
+            self.state = container.stringValue(for: ["STATE", "state"]) ?? ""
+        }
     }
     struct Geometry: Decodable {
         let type: String
@@ -189,6 +251,21 @@ struct GeoJSON: Decodable {
     }
 }
 
+struct CountyMapCounty: Hashable {
+    let state: String
+    let name: String
+
+    var normalized: CountyMapCounty {
+        CountyMapCounty(
+            state: StateFIPS.getFIPS(for: state) ?? state.trimmingCharacters(in: .whitespacesAndNewlines).uppercased(),
+            name: name
+                .replacingOccurrences(of: " County", with: "", options: [.caseInsensitive])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+        )
+    }
+}
+
 struct StateFIPS {
     static let map: [String: String] = [
         "AL": "01", "AK": "02", "AZ": "04", "AR": "05", "CA": "06",
@@ -203,7 +280,41 @@ struct StateFIPS {
         "VA": "51", "WA": "53", "WV": "54", "WI": "55", "WY": "56",
         "DC": "11", "PR": "72"
     ]
+    static let names: [String: String] = [
+        "ALABAMA": "01", "ALASKA": "02", "ARIZONA": "04", "ARKANSAS": "05",
+        "CALIFORNIA": "06", "COLORADO": "08", "CONNECTICUT": "09", "DELAWARE": "10",
+        "DISTRICT OF COLUMBIA": "11", "FLORIDA": "12", "GEORGIA": "13", "HAWAII": "15",
+        "IDAHO": "16", "ILLINOIS": "17", "INDIANA": "18", "IOWA": "19",
+        "KANSAS": "20", "KENTUCKY": "21", "LOUISIANA": "22", "MAINE": "23",
+        "MARYLAND": "24", "MASSACHUSETTS": "25", "MICHIGAN": "26", "MINNESOTA": "27",
+        "MISSISSIPPI": "28", "MISSOURI": "29", "MONTANA": "30", "NEBRASKA": "31",
+        "NEVADA": "32", "NEW HAMPSHIRE": "33", "NEW JERSEY": "34", "NEW MEXICO": "35",
+        "NEW YORK": "36", "NORTH CAROLINA": "37", "NORTH DAKOTA": "38", "OHIO": "39",
+        "OKLAHOMA": "40", "OREGON": "41", "PENNSYLVANIA": "42", "RHODE ISLAND": "44",
+        "SOUTH CAROLINA": "45", "SOUTH DAKOTA": "46", "TENNESSEE": "47", "TEXAS": "48",
+        "UTAH": "49", "VERMONT": "50", "VIRGINIA": "51", "WASHINGTON": "53",
+        "WEST VIRGINIA": "54", "WISCONSIN": "55", "WYOMING": "56", "PUERTO RICO": "72"
+    ]
     static func getFIPS(for states: Set<String>) -> Set<String> {
-        Set(states.compactMap { map[$0.uppercased()] })
+        Set(states.compactMap { getFIPS(for: $0) })
+    }
+
+    static func getFIPS(for state: String) -> String? {
+        let normalized = state.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        if normalized.count == 2, normalized.allSatisfy(\.isNumber) {
+            return normalized
+        }
+        return map[normalized] ?? names[normalized]
+    }
+}
+
+private extension KeyedDecodingContainer where Key == GeoJSON.Properties.DynamicKey {
+    func stringValue(for keys: [String]) -> String? {
+        for keyName in keys {
+            guard let key = Key(stringValue: keyName),
+                  let value = try? decode(String.self, forKey: key) else { continue }
+            return value
+        }
+        return nil
     }
 }

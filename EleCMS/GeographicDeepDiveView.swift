@@ -186,7 +186,7 @@ struct GeographicDeepDiveView: View {
     var dashboardContent: some View {
         VStack(alignment: .leading, spacing: 32) {
             // Highlights
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 segmentCard(title: "Market", stats: totalMarket, segment: .total)
                 segmentCard(title: "SNP", stats: snpMarket, segment: .snp)
                 segmentCard(title: "EGWP (non-PDP)", stats: egwpMarket, segment: .egwpNonPDP)
@@ -345,9 +345,9 @@ struct GeographicDeepDiveView: View {
     
     func miniGrowth(label: String, diff: Int, pct: Double) -> some View {
         HStack(spacing: 2) {
-            Text(label).font(.system(size: 7, weight: .bold)).foregroundColor(.gray)
-            Text("\(diff >= 0 ? "+" : "")\(UIFormatter.compactFormat(diff))").font(.system(size: 8, weight: .bold)).foregroundColor(diff >= 0 ? .green : .red)
-            Text(String(format: "(%.1f%%)", pct)).font(.system(size: 8)).foregroundColor(diff >= 0 ? .green : .red)
+            Text(label).font(.system(size: 14, weight: .bold)).foregroundColor(.gray)
+            Text("\(diff >= 0 ? "+" : "")\(UIFormatter.compactFormat(diff))").font(.system(size: 14, weight: .bold)).foregroundColor(diff >= 0 ? .green : .red)
+            Text(String(format: "(%.1f%%)", pct)).font(.system(size: 14)).foregroundColor(diff >= 0 ? .green : .red)
         }
     }
     

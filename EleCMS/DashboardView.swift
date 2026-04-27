@@ -133,7 +133,7 @@ struct DashboardView: View {
     var dashboardContent: some View {
         VStack(alignment: .leading, spacing: 32) {
             // Highlights
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 segmentCard(title: "Market", stats: totalMarket, segment: .total)
                 segmentCard(title: "SNP", stats: snpMarket, segment: .snp)
                 segmentCard(title: "EGWP (non-PDP)", stats: egwpMarket, segment: .egwpNonPDP)

@@ -40,6 +40,7 @@ struct PlanDetailView: View {
     }
     
     @State private var footprintFIPS: Set<String> = []
+    @State private var footprintCounties: Set<CountyMapCounty> = []
     @State private var footprintStates: Set<String> = []
     
     init(dataStore: DataStore, isMenuOpen: Binding<Bool>, planID: String? = nil) {
@@ -102,6 +103,9 @@ struct PlanDetailView: View {
                 selectedPlanID = pid
                 fetchPlanData(planID: pid)
             }
+        }
+        .onChange(of: planSearchText) { _ in
+            fetchAvailablePlans(query: planSearchText)
         }
     }
     
@@ -170,40 +174,54 @@ struct PlanDetailView: View {
             }
             .padding(.horizontal)
             
-            // Trend
-            MarketTrendChart(trendData: trendData, rawSelectedDate: .constant(nil), chartDomain: chartDomain)
+            trendAndMapSection
                 .padding(.horizontal)
-            
-            // Service Area Map
+
+            topCountiesSection
+                .padding(.horizontal)
+        }
+    }
+
+    var trendAndMapSection: some View {
+        HStack(alignment: .top, spacing: 16) {
+            MarketTrendChart(
+                trendData: trendData,
+                rawSelectedDate: .constant(nil),
+                chartDomain: chartDomain,
+                chartHeight: 340
+            )
+            .frame(maxWidth: .infinity)
+
             VStack(alignment: .leading, spacing: 16) {
-                CustomSectionHeader(title: "Service Area Footprint", subtitle: "\(footprintFIPS.count) Counties Offered")
-                
+                CustomSectionHeader(title: "Service Area Footprint", subtitle: "\(serviceAreaCountyCount) Counties Offered")
+
                 ModernCard {
-                    VStack(spacing: 0) {
-                        CountyMapView(footprintFIPS: footprintFIPS, states: footprintStates)
-                            .frame(height: 300)
-                            .cornerRadius(12)
-                        
-                        Divider().background(Color.white.opacity(0.1)).padding(.vertical, 12)
-                        
-                        // Top Counties List
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("TOP COUNTIES BY ENROLLMENT").font(.system(size: 9, weight: .black)).foregroundColor(.gray)
-                            
-                            ForEach(countyEnrollments.prefix(5)) { ce in
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(ce.id).font(.system(size: 12, weight: .bold)).foregroundColor(.white)
-                                        Text(ce.state).font(.system(size: 9, weight: .black)).foregroundColor(.blue)
-                                    }
-                                    Spacer()
-                                    Text(UIFormatter.formatNumber(ce.enrollment)).font(.system(size: 12, weight: .bold, design: .rounded)).foregroundColor(.white)
-                                }
+                    CountyMapView(footprintFIPS: footprintFIPS, footprintCounties: footprintCounties, states: footprintStates)
+                        .frame(height: 340)
+                        .cornerRadius(12)
+                }
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    var topCountiesSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            CustomSectionHeader(title: "Top Counties by Enrollment")
+
+            ModernCard {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(countyEnrollments.prefix(5)) { ce in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(ce.id).font(.system(size: 12, weight: .bold)).foregroundColor(.white)
+                                Text(ce.state).font(.system(size: 9, weight: .black)).foregroundColor(.blue)
                             }
+                            Spacer()
+                            Text(UIFormatter.formatNumber(ce.enrollment)).font(.system(size: 12, weight: .bold, design: .rounded)).foregroundColor(.white)
                         }
                     }
                 }
-                .padding(.horizontal)
             }
         }
     }
@@ -229,6 +247,10 @@ struct PlanDetailView: View {
         let padding = rangeVal > 0 ? Double(rangeVal) * 0.2 : Double(maxValue) * 0.1
         return Swift.max(0, Int(Double(minValue) - padding))...Int(Double(maxValue) + padding)
     }
+
+    var serviceAreaCountyCount: Int {
+        Swift.max(footprintCounties.count, footprintFIPS.count)
+    }
     
     var selectPlanPrompt: some View {
         VStack(spacing: 20) {
@@ -239,23 +261,34 @@ struct PlanDetailView: View {
         .frame(maxWidth: .infinity).padding(.top, 100)
     }
     
-    func fetchAvailablePlans() {
+    func fetchAvailablePlans(query: String? = nil) {
         Task {
             do {
                 let pRow = try dataStore.database.query(sql: "SELECT period_id FROM periods ORDER BY year DESC, month DESC LIMIT 1")
                 guard let pid = pRow.first?["period_id"] as? Int else { return }
                 
-                let sql = """
+                var sql = """
                     SELECT p.contract_id, p.cms_plan_id, p.name, c.name as carrier, SUM(e.enrollment) as total
                     FROM plan_dim p
                     JOIN carrier_dim c ON c.carrier_id = p.carrier_id
                     JOIN enrollment_records e ON e.plan_id = p.plan_id
                     WHERE e.period_id = \(pid)
+                """
+
+                var args: [Any] = []
+                if let q = query, !q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    sql += " AND (p.name LIKE ? OR p.contract_id LIKE ? OR p.cms_plan_id LIKE ? OR c.name LIKE ?)"
+                    let searchArg = "%\(q)%"
+                    args = [searchArg, searchArg, searchArg, searchArg]
+                }
+
+                sql += """
                     GROUP BY p.plan_id
                     ORDER BY total DESC
                     LIMIT 200
                 """
-                let rows = try dataStore.database.query(sql: sql)
+
+                let rows = try dataStore.database.query(sql: sql, arguments: args)
                 let plans = rows.map { row in
                     PlanOption(
                         id: "\(row["contract_id"] ?? "")-\(row["cms_plan_id"] ?? "")",
@@ -339,16 +372,18 @@ struct PlanDetailView: View {
                     JOIN plan_dim p ON p.plan_id = psa.plan_id
                     JOIN county_dim co ON co.county_id = psa.county_id
                     WHERE p.contract_id = ? AND p.cms_plan_id = ? 
-                    AND psa.year = (SELECT MAX(year) FROM plan_service_area WHERE plan_id = p.plan_id AND year <= \(currentPeriod.year))
+                    AND psa.year = COALESCE(
+                        (SELECT MAX(year) FROM plan_service_area WHERE plan_id = p.plan_id AND year <= \(currentPeriod.year)),
+                        (SELECT MAX(year) FROM plan_service_area WHERE plan_id = p.plan_id)
+                    )
                 """, arguments: [contractID, cmsPlanID])
                 
                 let footprint = footprintRows.map { row in
                     let rawFips = row["fips_county_code"] as? String ?? ""
-                    let paddedFips = rawFips.count == 4 ? "0\(rawFips)" : rawFips
                     return PlanCountyEnrollment(
                         id: row["name"] as? String ?? "",
                         state: row["state"] as? String ?? "",
-                        fips: paddedFips,
+                        fips: normalizedFIPS(rawFips) ?? "",
                         enrollment: 0
                     )
                 }
@@ -365,19 +400,22 @@ struct PlanDetailView: View {
                 
                 let enrollmentCounties = enrollmentRows.map { row in
                     let rawFips = row["fips_county_code"] as? String ?? ""
-                    let paddedFips = rawFips.count == 4 ? "0\(rawFips)" : rawFips
                     return PlanCountyEnrollment(
                         id: row["name"] as? String ?? "",
                         state: row["state"] as? String ?? "",
-                        fips: paddedFips,
+                        fips: normalizedFIPS(rawFips) ?? "",
                         enrollment: row["enrollment"] as? Int ?? 0
                     )
                 }
                 
-                var fipsSet = Set(footprint.map { $0.fips })
+                var fipsSet = Set(footprint.compactMap { $0.fips.isEmpty ? nil : $0.fips })
+                var countySet = Set(footprint.compactMap { countyMapCounty(from: $0) })
                 if fipsSet.isEmpty {
                     // Fallback to enrollment counties if footprint is empty
-                    fipsSet = Set(enrollmentCounties.map { $0.fips })
+                    fipsSet = Set(enrollmentCounties.compactMap { $0.fips.isEmpty ? nil : $0.fips })
+                }
+                if countySet.isEmpty {
+                    countySet = Set(enrollmentCounties.compactMap { countyMapCounty(from: $0) })
                 }
                 
                 let allStates = Set(footprint.map { $0.state })
@@ -389,6 +427,7 @@ struct PlanDetailView: View {
                     self.trendData = trend
                     self.countyEnrollments = enrollmentCounties
                     self.footprintFIPS = fipsSet
+                    self.footprintCounties = countySet
                     self.footprintStates = allStates
                     self.isLoading = false
                 }
@@ -406,6 +445,28 @@ struct PlanDetailView: View {
     private func getPriorYearPeriodID(_ p: Period) throws -> Int? {
         let r = try dataStore.database.query(sql: "SELECT period_id FROM periods WHERE year = \(p.year - 1) AND month = \(p.month)")
         return r.first?["period_id"] as? Int
+    }
+
+    private func normalizedFIPS(_ value: String) -> String? {
+        let digits = String(value.filter { $0.isNumber })
+        guard !digits.isEmpty else { return nil }
+        return String(digits.suffix(5)).leftPadding(toLength: 5, withPad: "0")
+    }
+
+    private func countyMapCounty(from county: PlanCountyEnrollment) -> CountyMapCounty? {
+        let name = county.id.trimmingCharacters(in: .whitespacesAndNewlines)
+        let state = county.state.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !state.isEmpty, state != "??", name.localizedCaseInsensitiveCompare("All Counties") != .orderedSame else {
+            return nil
+        }
+        return CountyMapCounty(state: state, name: name)
+    }
+}
+
+private extension String {
+    func leftPadding(toLength: Int, withPad character: Character) -> String {
+        guard count < toLength else { return self }
+        return String(repeating: String(character), count: toLength - count) + self
     }
 }
 
