@@ -14,6 +14,10 @@ struct CountyMapView: View {
     @State private var isLoading = false
     @State private var boundingBox: MKMapRect?
     @State private var loadID = UUID()
+    @State private var zoomScale: CGFloat = 1
+    @State private var lastZoomScale: CGFloat = 1
+    @State private var panOffset: CGSize = .zero
+    @State private var lastPanOffset: CGSize = .zero
 
     private var normalizedFootprintFIPS: Set<String> {
         Set(footprintFIPS.compactMap { CountyMapView.normalizedFIPS($0) })
@@ -32,7 +36,8 @@ struct CountyMapView: View {
                     ProgressView().tint(.white)
                 } else if let box = boundingBox, !countyFeatures.isEmpty {
                     Canvas { context, size in
-                        let scale = calculateScale(for: box, in: size)
+                        let fittedScale = calculateScale(for: box, in: size)
+                        let scale = fittedScale * Double(zoomScale)
                         let offset = calculateOffset(for: box, in: size, scale: scale)
                         let activeFIPS = normalizedFootprintFIPS
                         let activeCounties = normalizedFootprintCounties
@@ -64,6 +69,13 @@ struct CountyMapView: View {
                             }
                         }
                     }
+                    .contentShape(Rectangle())
+                    .gesture(panGesture)
+                    .simultaneousGesture(zoomGesture)
+                    .overlay(alignment: .topTrailing) {
+                        mapControls
+                            .padding(10)
+                    }
                 } else {
                     VStack {
                         Image(systemName: "map").font(.largeTitle).foregroundColor(.gray.opacity(0.4))
@@ -84,6 +96,7 @@ struct CountyMapView: View {
         loadID = id
         countyFeatures = []
         boundingBox = nil
+        resetInteraction()
         Task { await loadAndFilter(loadID: id) }
     }
     
@@ -105,9 +118,81 @@ struct CountyMapView: View {
         let renderedWidth = box.size.width * scale
         let renderedHeight = box.size.height * scale
         return CGPoint(
-            x: (size.width - renderedWidth) / 2,
-            y: (size.height - renderedHeight) / 2
+            x: (size.width - renderedWidth) / 2 + panOffset.width,
+            y: (size.height - renderedHeight) / 2 + panOffset.height
         )
+    }
+
+    private var panGesture: some Gesture {
+        DragGesture()
+            .onChanged { value in
+                panOffset = CGSize(
+                    width: lastPanOffset.width + value.translation.width,
+                    height: lastPanOffset.height + value.translation.height
+                )
+            }
+            .onEnded { _ in
+                lastPanOffset = panOffset
+            }
+    }
+
+    private var zoomGesture: some Gesture {
+        MagnificationGesture()
+            .onChanged { value in
+                zoomScale = clampedZoom(lastZoomScale * value)
+            }
+            .onEnded { _ in
+                lastZoomScale = zoomScale
+            }
+    }
+
+    private var mapControls: some View {
+        HStack(spacing: 6) {
+            mapControlButton(systemName: "minus.magnifyingglass") {
+                setZoom(zoomScale / 1.35)
+            }
+            mapControlButton(systemName: "plus.magnifyingglass") {
+                setZoom(zoomScale * 1.35)
+            }
+            mapControlButton(systemName: "arrow.counterclockwise") {
+                resetInteraction()
+            }
+        }
+        .padding(6)
+        .background(.black.opacity(0.45))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+        )
+    }
+
+    private func mapControlButton(systemName: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundColor(.white)
+                .frame(width: 30, height: 30)
+                .background(Color.white.opacity(0.10))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func setZoom(_ value: CGFloat) {
+        zoomScale = clampedZoom(value)
+        lastZoomScale = zoomScale
+    }
+
+    private func clampedZoom(_ value: CGFloat) -> CGFloat {
+        min(max(value, 1), 8)
+    }
+
+    private func resetInteraction() {
+        zoomScale = 1
+        lastZoomScale = 1
+        panOffset = .zero
+        lastPanOffset = .zero
     }
     
     private func loadAndFilter(loadID currentLoadID: UUID) async {
