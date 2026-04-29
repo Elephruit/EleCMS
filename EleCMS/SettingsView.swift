@@ -67,6 +67,7 @@ struct SettingsView: View {
                     .padding(.vertical, 24)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             
             if isDeleting {
                 ZStack {

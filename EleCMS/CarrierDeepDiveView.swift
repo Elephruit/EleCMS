@@ -345,7 +345,7 @@ struct CarrierPickerSheet: View {
     }
     
     var body: some View {
-        ZStack(alignment: .bottom) {
+        ZStack(alignment: .top) {
             Color.black.opacity(0.6).ignoresSafeArea()
                 .onTapGesture { close() }
             
@@ -467,12 +467,10 @@ struct CarrierPickerSheet: View {
                     .padding(.bottom, 36)
                 }
             }
-            .frame(maxHeight: screenSize.height * 0.78)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background(AppColors.background)
-            .clipShape(RoundedCorner(radius: 24, corners: [.topLeft, .topRight]))
-            .shadow(color: .black.opacity(0.5), radius: 20, x: 0, y: -10)
         }
-        .ignoresSafeArea()
+        .ignoresSafeArea(edges: .bottom)
     }
     
     private func close() {

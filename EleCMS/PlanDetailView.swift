@@ -660,7 +660,7 @@ struct PlanPickerSheet: View {
     }
     
     var body: some View {
-        ZStack(alignment: .bottom) {
+        ZStack(alignment: .top) {
             Color.black.opacity(0.6).ignoresSafeArea().onTapGesture { close() }
             
             VStack(spacing: 0) {
@@ -708,10 +708,10 @@ struct PlanPickerSheet: View {
                     .padding(.horizontal).padding(.bottom, 36)
                 }
             }
-            .frame(maxHeight: screenSize.height * 0.78).background(AppColors.background)
-            .clipShape(RoundedCorner(radius: 24, corners: [.topLeft, .topRight]))
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .background(AppColors.background)
         }
-        .ignoresSafeArea()
+        .ignoresSafeArea(edges: .bottom)
     }
     
     private func close() { withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { isPresented = false } }
