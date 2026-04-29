@@ -9,11 +9,11 @@ struct SettingsView: View {
     @State private var isDeleting = false
     
     var body: some View {
-        ZStack {
+        ZStack(alignment: .top) {
             AppColors.background.ignoresSafeArea()
             
             VStack(spacing: 0) {
-                headerView
+                PageHeader(title: "Advanced Settings", subtitle: nil, isMenuOpen: $isMenuOpen)
                 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 32) {
@@ -85,32 +85,6 @@ struct SettingsView: View {
             Button("Delete Everything", role: .destructive) { purgeData() }
         } message: {
             Text("This will permanently delete all loaded enrollment and landscape data. This action cannot be undone.")
-        }
-    }
-    
-    var headerView: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Button(action: { withAnimation(.spring()) { isMenuOpen = true } }) {
-                    ZStack {
-                        Circle().fill(AppColors.surface).frame(width: 40, height: 40)
-                        Image(systemName: "line.3.horizontal")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundColor(.white)
-                    }
-                }
-                Spacer()
-                Text("Advanced Settings")
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
-                Spacer()
-                Color.clear.frame(width: 40)
-            }
-            .padding(.horizontal)
-            .padding(.vertical, 12)
-            .background(AppColors.background.opacity(0.95))
-            
-            Divider().background(Color.white.opacity(0.1))
         }
     }
     
