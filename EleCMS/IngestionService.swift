@@ -63,6 +63,7 @@ final class IngestionService {
         try store.database.execute(sql: DBSchema.createIndexes)
         try? store.database.execute(sql: "ALTER TABLE staging_landscape ADD COLUMN ssa_county_code TEXT;")
         try? store.database.execute(sql: "ALTER TABLE staging_landscape ADD COLUMN fips_county_code TEXT;")
+        try addLandscapeStagingColumnsIfNeeded()
         
         let (mapping, headerRowIndex) = try await detectLandscapeColumns(url: url)
         if mapping.isEmpty { 
@@ -112,12 +113,15 @@ final class IngestionService {
             var foundKeyColumn = false
             for (i, h) in headers.enumerated() {
                 let clean = h.trimmingCharacters(in: .init(charactersIn: "\u{feff}\" ")).lowercased()
+                let compact = clean.replacingOccurrences(of: " ", with: "")
                 
-                if (clean.contains("contract") && clean.contains("id")) || (clean == "contract id") || (clean == "contract number") { 
-                    tempMapping["contract_id"] = i; foundKeyColumn = true 
+                if clean == "contract id" || clean == "contract number" || compact == "contractid" {
+                    tempMapping["contract_id"] = i
+                    foundKeyColumn = true
                 }
-                else if (clean.contains("plan") && clean.contains("id")) || (clean == "plan id") || (clean == "pbp") { 
-                    tempMapping["plan_id"] = i; foundKeyColumn = true 
+                else if clean == "plan id" || clean == "pbp" || compact == "planid" {
+                    tempMapping["plan_id"] = i
+                    foundKeyColumn = true
                 }
                 else if clean == "state"
                     || clean.contains("state abbreviation")
@@ -132,8 +136,26 @@ final class IngestionService {
                 else if clean.contains("organization") && clean.contains("name") { tempMapping["carrier_name"] = i }
                 else if clean.contains("plan") && clean.contains("name") { tempMapping["plan_name"] = i }
                 else if clean.contains("plan") && clean.contains("type") { tempMapping["plan_type"] = i }
-                else if clean.contains("consolidated") && clean.contains("premium") { tempMapping["monthly_premium"] = i }
-                else if clean.contains("deductible") { tempMapping["deductible"] = i }
+                else if clean.contains("monthly") && clean.contains("consolidated") && clean.contains("premium") { tempMapping["monthly_premium"] = i }
+                else if clean.contains("annual") && clean.contains("part d") && clean.contains("deductible") { tempMapping["part_d_deductible"] = i }
+                else if clean.contains("no part d deductible") { tempMapping["no_part_d_deductible"] = i }
+                else if clean == "deductible" || (clean.contains("deductible") && tempMapping["deductible"] == nil) { tempMapping["deductible"] = i }
+                else if clean == "part c premium" { tempMapping["part_c_premium"] = i }
+                else if clean == "part d basic premium" { tempMapping["part_d_basic_premium"] = i }
+                else if clean == "part d supplemental premium" { tempMapping["part_d_supplemental_premium"] = i }
+                else if clean == "part d total premium" { tempMapping["part_d_total_premium"] = i }
+                else if clean.contains("low income premium subsidy") || clean.contains("lips amount") { tempMapping["low_income_premium_subsidy"] = i }
+                else if clean.contains("part d lips") && clean.contains("cms pays") { tempMapping["part_d_lips_amount"] = i }
+                else if clean.contains("part d low income beneficiary premium") { tempMapping["part_d_low_income_premium"] = i }
+                else if clean.contains("out-of-pocket") && clean.contains("threshold") { tempMapping["oop_threshold"] = i }
+                else if clean.contains("maximum out-of-pocket") || clean.contains("moop") { tempMapping["moop_amount"] = i }
+                else if clean == "part d coverage indicator" { tempMapping["part_d_coverage"] = i }
+                else if clean == "drug benefit category" { tempMapping["drug_benefit_category"] = i }
+                else if clean == "drug benefit type" { tempMapping["drug_benefit_type"] = i }
+                else if clean.contains("zero-dollar cost sharing") { tempMapping["zero_dollar_cost_sharing"] = i }
+                else if clean == "part c summary star rating" { tempMapping["part_c_star_rating"] = i }
+                else if clean == "part d summary star rating" { tempMapping["part_d_star_rating"] = i }
+                else if clean == "overall star rating" { tempMapping["overall_star_rating"] = i }
                 else if clean == "snp type" || clean.contains("snp type") { tempMapping["snp_type"] = i }
                 else if clean.contains("ssa") && clean.contains("county") && clean.contains("code") { tempMapping["ssa_county_code"] = i }
                 else if clean.contains("fips") && clean.contains("county") && clean.contains("code") { tempMapping["fips_county_code"] = i }
@@ -151,7 +173,16 @@ final class IngestionService {
             ? ["contract_id", "plan_id", "ssa_county_code", "fips_county_code", "state", "county", "enrollment"]
             : (table == "staging_contracts" 
                 ? ["contract_id", "plan_id", "organization_type", "plan_type", "offers_part_d", "organization_name", "organization_marketing_name", "plan_name", "parent_organization", "contract_effective_date", "is_snp", "is_egwp"]
-                : ["contract_id", "plan_id", "state", "county", "carrier_name", "plan_name", "plan_type", "monthly_premium", "deductible", "snp_type", "ssa_county_code", "fips_county_code"])
+                : [
+                    "contract_id", "plan_id", "state", "county", "carrier_name", "plan_name", "plan_type",
+                    "monthly_premium", "deductible", "part_d_deductible", "part_c_premium",
+                    "part_d_basic_premium", "part_d_supplemental_premium", "part_d_total_premium",
+                    "low_income_premium_subsidy", "part_d_lips_amount", "part_d_low_income_premium",
+                    "oop_threshold", "moop_amount", "part_d_coverage", "drug_benefit_category",
+                    "drug_benefit_type", "zero_dollar_cost_sharing", "no_part_d_deductible",
+                    "part_c_star_rating", "part_d_star_rating", "overall_star_rating",
+                    "snp_type", "ssa_county_code", "fips_county_code"
+                ])
 
         let colIndices = cols.map { mapping[$0] ?? -1 }
         let data = try Data(contentsOf: url, options: .mappedIfSafe)
@@ -233,6 +264,21 @@ final class IngestionService {
             offsets[count] = (fs, fe - fs); count += 1
         }
         return count
+    }
+
+    private func addLandscapeStagingColumnsIfNeeded() throws {
+        let columns = [
+            "part_d_deductible", "part_c_premium", "part_d_basic_premium",
+            "part_d_supplemental_premium", "part_d_total_premium",
+            "low_income_premium_subsidy", "part_d_lips_amount",
+            "part_d_low_income_premium", "oop_threshold", "moop_amount",
+            "part_d_coverage", "drug_benefit_category", "drug_benefit_type",
+            "zero_dollar_cost_sharing", "no_part_d_deductible",
+            "part_c_star_rating", "part_d_star_rating", "overall_star_rating"
+        ]
+        for column in columns {
+            try? store.database.execute(sql: "ALTER TABLE staging_landscape ADD COLUMN \(column) TEXT;")
+        }
     }
 
     private func detectCPSCColumns(url: URL) async throws -> [String: Int] {

@@ -13,6 +13,7 @@ struct PlanDetailView: View {
     @State private var isPlanPickerPresented = false
     @State private var planSearchText = ""
     @State private var isLoading = false
+    @State private var planDataRequestID = UUID()
     
     @State private var trendData: [TrendPoint] = []
     @State private var countyEnrollments: [PlanCountyEnrollment] = []
@@ -25,6 +26,24 @@ struct PlanDetailView: View {
         let type: String
         let premium: Double?
         let deductible: Double?
+        let partDDeductible: Double?
+        let partCPremium: Double?
+        let partDBasicPremium: Double?
+        let partDSupplementalPremium: Double?
+        let partDTotalPremium: Double?
+        let lowIncomePremiumSubsidy: Double?
+        let partDLipsAmount: Double?
+        let partDLowIncomePremium: Double?
+        let oopThreshold: Double?
+        let moopAmount: Double?
+        let partDCoverage: String?
+        let drugBenefitCategory: String?
+        let drugBenefitType: String?
+        let zeroDollarCostSharing: String?
+        let noPartDDeductible: String?
+        let partCStarRating: Double?
+        let partDStarRating: Double?
+        let overallStarRating: Double?
         let enrollment: Int
         let momDiff: Int
         let momPct: Double
@@ -85,6 +104,7 @@ struct PlanDetailView: View {
                         screenSize: mainGeo.size,
                         onSelect: { plan in
                             selectedPlanID = plan.id
+                            resetPlanData()
                             fetchPlanData(planID: plan.id)
                         }
                     )
@@ -101,6 +121,7 @@ struct PlanDetailView: View {
             fetchAvailablePlans()
             if let pid = initialPlanID {
                 selectedPlanID = pid
+                resetPlanData()
                 fetchPlanData(planID: pid)
             }
         }
@@ -173,6 +194,9 @@ struct PlanDetailView: View {
                 .frame(width: 150)
             }
             .padding(.horizontal)
+
+            planDetailsSection(details)
+                .padding(.horizontal)
             
             trendAndMapSection
                 .padding(.horizontal)
@@ -197,6 +221,7 @@ struct PlanDetailView: View {
 
                 ModernCard {
                     CountyMapView(footprintFIPS: footprintFIPS, footprintCounties: footprintCounties, states: footprintStates)
+                        .id(selectedPlanID ?? "")
                         .frame(height: 340)
                         .cornerRadius(12)
                 }
@@ -238,6 +263,57 @@ struct PlanDetailView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
+
+    func planDetailsSection(_ details: PlanDetailData) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            CustomSectionHeader(title: "Plan Details", subtitle: "Landscape benefits and cost fields")
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
+                detailTile(label: "Premium", value: currency(details.premium), icon: "dollarsign.circle")
+                detailTile(label: "Deductible", value: currency(details.deductible), icon: "creditcard")
+                detailTile(label: "Part C Premium", value: currency(details.partCPremium), icon: "cross.case")
+                detailTile(label: "Part D Total Premium", value: currency(details.partDTotalPremium), icon: "pills")
+                detailTile(label: "Part D Deductible", value: currency(details.partDDeductible), icon: "creditcard")
+                detailTile(label: "MOOP", value: currency(details.moopAmount), icon: "shield")
+                detailTile(label: "Part D OOP Threshold", value: currency(details.oopThreshold), icon: "chart.line.uptrend.xyaxis")
+                detailTile(label: "Part D Coverage", value: textValue(details.partDCoverage), icon: "checkmark.seal")
+                detailTile(label: "Drug Benefit", value: [details.drugBenefitCategory, details.drugBenefitType].compactMap { cleanText($0) }.joined(separator: " / "), icon: "list.bullet.clipboard")
+                detailTile(label: "Basic Rx Premium", value: currency(details.partDBasicPremium), icon: "dollarsign")
+                detailTile(label: "Supplemental Rx Premium", value: currency(details.partDSupplementalPremium), icon: "plus.circle")
+                detailTile(label: "LIPS Subsidy", value: currency(details.lowIncomePremiumSubsidy), icon: "person.crop.circle.badge.checkmark")
+                detailTile(label: "Part D LIPS CMS Pays", value: currency(details.partDLipsAmount), icon: "building.columns")
+                detailTile(label: "Low-Income Premium", value: currency(details.partDLowIncomePremium), icon: "person.text.rectangle")
+                detailTile(label: "No Part D Deductible Tier", value: textValue(details.noPartDDeductible), icon: "tag")
+                detailTile(label: "Zero-Dollar Cost Share", value: textValue(details.zeroDollarCostSharing), icon: "0.circle")
+                detailTile(label: "Overall Stars", value: rating(details.overallStarRating), icon: "star")
+                detailTile(label: "Part C / D Stars", value: "\(rating(details.partCStarRating)) / \(rating(details.partDStarRating))", icon: "star.leadinghalf.filled")
+            }
+        }
+    }
+
+    func detailTile(label: String, value: String, icon: String) -> some View {
+        ModernCard {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: icon)
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.blue)
+                    Text(label.uppercased())
+                        .font(.system(size: 8, weight: .black))
+                        .foregroundColor(.gray)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+                Text(value.isEmpty ? "N/A" : value)
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.75)
+                    .frame(minHeight: 36, alignment: .topLeading)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
     
     var chartDomain: ClosedRange<Int> {
         let enrollments = trendData.map { $0.enrollment }
@@ -250,6 +326,29 @@ struct PlanDetailView: View {
 
     var serviceAreaCountyCount: Int {
         Swift.max(footprintCounties.count, footprintFIPS.count)
+    }
+
+    func currency(_ value: Double?) -> String {
+        guard let value else { return "N/A" }
+        return String(format: "$%.2f", value)
+    }
+
+    func rating(_ value: Double?) -> String {
+        guard let value else { return "N/A" }
+        return String(format: "%.1f", value)
+    }
+
+    func textValue(_ value: String?) -> String {
+        cleanText(value) ?? "N/A"
+    }
+
+    func cleanText(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.localizedCaseInsensitiveCompare("Not Applicable") != .orderedSame else {
+            return nil
+        }
+        return trimmed
     }
     
     var selectPlanPrompt: some View {
@@ -303,6 +402,8 @@ struct PlanDetailView: View {
     }
     
     func fetchPlanData(planID: String) {
+        let requestID = UUID()
+        planDataRequestID = requestID
         isLoading = true
         let parts = planID.split(separator: "-")
         guard parts.count == 2 else { isLoading = false; return }
@@ -312,26 +413,62 @@ struct PlanDetailView: View {
         Task {
             do {
                 let pRow = try dataStore.database.query(sql: "SELECT period_id, year, month FROM periods ORDER BY year DESC, month DESC LIMIT 1")
-                guard let currentPeriod = pRow.first.map({ Period(id: $0["period_id"] as? Int ?? 0, year: $0["year"] as? Int ?? 0, month: $0["month"] as? Int ?? 0) }) else { isLoading = false; return }
+                guard let currentPeriod = pRow.first.map({ Period(id: $0["period_id"] as? Int ?? 0, year: $0["year"] as? Int ?? 0, month: $0["month"] as? Int ?? 0) }) else {
+                    await MainActor.run {
+                        guard self.planDataRequestID == requestID else { return }
+                        self.isLoading = false
+                    }
+                    return
+                }
                 
                 let pmID = try getPriorPeriodID(currentPeriod)
                 let pyID = try getPriorYearPeriodID(currentPeriod)
                 
                 // 1. Basic Details
                 let detailSQL = """
-                    SELECT p.*, c.name as carrier_name, l.monthly_premium, l.deductible,
+                    SELECT p.*, c.name as carrier_name,
+                        l.monthly_premium,
+                        l.deductible,
+                        l.part_d_deductible,
+                        l.part_c_premium,
+                        l.part_d_basic_premium,
+                        l.part_d_supplemental_premium,
+                        l.part_d_total_premium,
+                        l.low_income_premium_subsidy,
+                        l.part_d_lips_amount,
+                        l.part_d_low_income_premium,
+                        l.oop_threshold,
+                        l.moop_amount,
+                        l.part_d_coverage,
+                        l.drug_benefit_category,
+                        l.drug_benefit_type,
+                        l.zero_dollar_cost_sharing,
+                        l.no_part_d_deductible,
+                        l.part_c_star_rating,
+                        l.part_d_star_rating,
+                        l.overall_star_rating,
                         SUM(CASE WHEN e.period_id = \(currentPeriod.id) THEN e.enrollment ELSE 0 END) as cur_e,
                         SUM(CASE WHEN e.period_id = \(pmID ?? -1) THEN e.enrollment ELSE 0 END) as pm_e,
                         SUM(CASE WHEN e.period_id = \(pyID ?? -1) THEN e.enrollment ELSE 0 END) as py_e
                     FROM plan_dim p
                     JOIN carrier_dim c ON c.carrier_id = p.carrier_id
-                    LEFT JOIN landscape_records l ON l.plan_id = p.plan_id AND l.year = \(currentPeriod.year)
+                    LEFT JOIN landscape_records l ON l.plan_id = p.plan_id
+                        AND l.year = COALESCE(
+                            (SELECT MAX(year) FROM landscape_records WHERE plan_id = p.plan_id AND year <= \(currentPeriod.year)),
+                            (SELECT MAX(year) FROM landscape_records WHERE plan_id = p.plan_id)
+                        )
                     LEFT JOIN enrollment_records e ON e.plan_id = p.plan_id
                     WHERE p.contract_id = ? AND p.cms_plan_id = ?
                     GROUP BY p.plan_id
                 """
                 let details = try dataStore.database.query(sql: detailSQL, arguments: [contractID, cmsPlanID])
-                guard let d = details.first else { isLoading = false; return }
+                guard let d = details.first else {
+                    await MainActor.run {
+                        guard self.planDataRequestID == requestID else { return }
+                        self.isLoading = false
+                    }
+                    return
+                }
                 
                 let curE = d["cur_e"] as? Int ?? 0
                 let pmE = d["pm_e"] as? Int ?? 0
@@ -345,6 +482,24 @@ struct PlanDetailView: View {
                     type: d["type"] as? String ?? "N/A",
                     premium: d["monthly_premium"] as? Double,
                     deductible: d["deductible"] as? Double,
+                    partDDeductible: d["part_d_deductible"] as? Double,
+                    partCPremium: d["part_c_premium"] as? Double,
+                    partDBasicPremium: d["part_d_basic_premium"] as? Double,
+                    partDSupplementalPremium: d["part_d_supplemental_premium"] as? Double,
+                    partDTotalPremium: d["part_d_total_premium"] as? Double,
+                    lowIncomePremiumSubsidy: d["low_income_premium_subsidy"] as? Double,
+                    partDLipsAmount: d["part_d_lips_amount"] as? Double,
+                    partDLowIncomePremium: d["part_d_low_income_premium"] as? Double,
+                    oopThreshold: d["oop_threshold"] as? Double,
+                    moopAmount: d["moop_amount"] as? Double,
+                    partDCoverage: d["part_d_coverage"] as? String,
+                    drugBenefitCategory: d["drug_benefit_category"] as? String,
+                    drugBenefitType: d["drug_benefit_type"] as? String,
+                    zeroDollarCostSharing: d["zero_dollar_cost_sharing"] as? String,
+                    noPartDDeductible: d["no_part_d_deductible"] as? String,
+                    partCStarRating: d["part_c_star_rating"] as? Double,
+                    partDStarRating: d["part_d_star_rating"] as? Double,
+                    overallStarRating: d["overall_star_rating"] as? Double,
                     enrollment: curE,
                     momDiff: curE - pmE,
                     momPct: pmE > 0 ? (Double(curE - pmE) / Double(pmE)) * 100 : 0,
@@ -423,6 +578,7 @@ struct PlanDetailView: View {
                     .filter { !$0.isEmpty && $0 != "??" }
                 
                 await MainActor.run {
+                    guard self.planDataRequestID == requestID, self.selectedPlanID == planID else { return }
                     self.planDetails = detailData
                     self.trendData = trend
                     self.countyEnrollments = enrollmentCounties
@@ -431,8 +587,23 @@ struct PlanDetailView: View {
                     self.footprintStates = allStates
                     self.isLoading = false
                 }
-            } catch { print("Plan data failed: \(error)"); await MainActor.run { self.isLoading = false } }
+            } catch {
+                print("Plan data failed: \(error)")
+                await MainActor.run {
+                    guard self.planDataRequestID == requestID else { return }
+                    self.isLoading = false
+                }
+            }
         }
+    }
+
+    private func resetPlanData() {
+        planDetails = nil
+        trendData = []
+        countyEnrollments = []
+        footprintFIPS = []
+        footprintCounties = []
+        footprintStates = []
     }
     
     private func getPriorPeriodID(_ p: Period) throws -> Int? {

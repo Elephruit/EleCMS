@@ -12,8 +12,30 @@ final class EleDatabaseFactory {
         try? db.execute(sql: "ALTER TABLE plan_dim ADD COLUMN is_snp INTEGER DEFAULT 0;")
         try? db.execute(sql: "ALTER TABLE plan_dim ADD COLUMN is_egwp INTEGER DEFAULT 0;")
         try? db.execute(sql: "ALTER TABLE plan_dim ADD COLUMN snp_type TEXT;")
+        try migrateLandscapeDetailColumns(db)
         
         return db
+    }
+
+    private static func migrateLandscapeDetailColumns(_ db: SQLiteDatabase) throws {
+        let realColumns = [
+            "part_d_deductible", "part_c_premium", "part_d_basic_premium",
+            "part_d_supplemental_premium", "part_d_total_premium",
+            "low_income_premium_subsidy", "part_d_lips_amount",
+            "part_d_low_income_premium", "oop_threshold", "moop_amount",
+            "part_c_star_rating", "part_d_star_rating", "overall_star_rating"
+        ]
+        for column in realColumns {
+            try? db.execute(sql: "ALTER TABLE landscape_records ADD COLUMN \(column) REAL;")
+        }
+
+        let textColumns = [
+            "part_d_coverage", "drug_benefit_category", "drug_benefit_type",
+            "zero_dollar_cost_sharing", "no_part_d_deductible"
+        ]
+        for column in textColumns {
+            try? db.execute(sql: "ALTER TABLE landscape_records ADD COLUMN \(column) TEXT;")
+        }
     }
     
     private static func migrateCountyIdentityIfNeeded(_ db: SQLiteDatabase) throws {

@@ -13,6 +13,7 @@ struct CountyMapView: View {
     @State private var countyFeatures: [CountyFeature] = []
     @State private var isLoading = false
     @State private var boundingBox: MKMapRect?
+    @State private var loadID = UUID()
 
     private var normalizedFootprintFIPS: Set<String> {
         Set(footprintFIPS.compactMap { CountyMapView.normalizedFIPS($0) })
@@ -32,6 +33,7 @@ struct CountyMapView: View {
                 } else if let box = boundingBox, !countyFeatures.isEmpty {
                     Canvas { context, size in
                         let scale = calculateScale(for: box, in: size)
+                        let offset = calculateOffset(for: box, in: size, scale: scale)
                         let activeFIPS = normalizedFootprintFIPS
                         let activeCounties = normalizedFootprintCounties
                         
@@ -43,11 +45,11 @@ struct CountyMapView: View {
                                 var path = Path()
                                 guard let firstPoint = polygon.first else { continue }
                                 
-                                let start = project(firstPoint, box: box, size: size, scale: scale)
+                                let start = project(firstPoint, box: box, scale: scale, offset: offset)
                                 path.move(to: start)
                                 
                                 for i in 1..<polygon.count {
-                                    let next = project(polygon[i], box: box, size: size, scale: scale)
+                                    let next = project(polygon[i], box: box, scale: scale, offset: offset)
                                     path.addLine(to: next)
                                 }
                                 path.closeSubpath()
@@ -71,16 +73,24 @@ struct CountyMapView: View {
                 }
             }
         }
-        .task { await loadAndFilter() }
-        .onChange(of: states) { _ in Task { await loadAndFilter() } }
-        .onChange(of: footprintFIPS) { _ in Task { await loadAndFilter() } }
-        .onChange(of: footprintCounties) { _ in Task { await loadAndFilter() } }
+        .task { reload() }
+        .onChange(of: states) { _ in reload() }
+        .onChange(of: footprintFIPS) { _ in reload() }
+        .onChange(of: footprintCounties) { _ in reload() }
+    }
+
+    private func reload() {
+        let id = UUID()
+        loadID = id
+        countyFeatures = []
+        boundingBox = nil
+        Task { await loadAndFilter(loadID: id) }
     }
     
-    private func project(_ coord: CLLocationCoordinate2D, box: MKMapRect, size: CGSize, scale: Double) -> CGPoint {
+    private func project(_ coord: CLLocationCoordinate2D, box: MKMapRect, scale: Double, offset: CGPoint) -> CGPoint {
         let point = MKMapPoint(coord)
-        let x = (point.x - box.origin.x) * scale
-        let y = (point.y - box.origin.y) * scale
+        let x = offset.x + (point.x - box.origin.x) * scale
+        let y = offset.y + (point.y - box.origin.y) * scale
         return CGPoint(x: x, y: y)
     }
     
@@ -88,19 +98,33 @@ struct CountyMapView: View {
         if box.size.width == 0 || box.size.height == 0 { return 1.0 }
         let scaleX = size.width / box.size.width
         let scaleY = size.height / box.size.height
-        return min(scaleX, scaleY)
+        return min(scaleX, scaleY) * 0.92
+    }
+
+    private func calculateOffset(for box: MKMapRect, in size: CGSize, scale: Double) -> CGPoint {
+        let renderedWidth = box.size.width * scale
+        let renderedHeight = box.size.height * scale
+        return CGPoint(
+            x: (size.width - renderedWidth) / 2,
+            y: (size.height - renderedHeight) / 2
+        )
     }
     
-    private func loadAndFilter() async {
+    private func loadAndFilter(loadID currentLoadID: UUID) async {
         guard !footprintFIPS.isEmpty || !footprintCounties.isEmpty || !states.isEmpty else {
-            await MainActor.run { 
+            await MainActor.run {
+                guard self.loadID == currentLoadID else { return }
                 self.countyFeatures = []
                 self.boundingBox = nil
+                self.isLoading = false
             }
             return 
         }
         
-        isLoading = true
+        await MainActor.run {
+            guard self.loadID == currentLoadID else { return }
+            self.isLoading = true
+        }
         
         do {
             if CountyMapView.cachedGeoJSON == nil {
@@ -116,19 +140,26 @@ struct CountyMapView: View {
                 }
             }
             
-            guard let geoJSON = CountyMapView.cachedGeoJSON else { return }
+            guard let geoJSON = CountyMapView.cachedGeoJSON else {
+                await MainActor.run {
+                    guard self.loadID == currentLoadID else { return }
+                    self.isLoading = false
+                }
+                return
+            }
             let normalizedFootprint = Set(footprintFIPS.compactMap { CountyMapView.normalizedFIPS($0) })
             let countyFootprint = normalizedFootprintCounties
             let activeStateFIPS = normalizedFootprint.isEmpty
                 ? StateFIPS.getFIPS(for: states).union(Set(countyFootprint.compactMap { StateFIPS.getFIPS(for: $0.state) }))
                 : Set(normalizedFootprint.map { String($0.prefix(2)) })
+            let displayedStateFIPS = displayStateFIPS(from: activeStateFIPS)
             
             var features: [CountyFeature] = []
             var combinedRect = MKMapRect.null
             
             for feature in geoJSON.features {
                 let stateFips = String(feature.id.prefix(2))
-                guard activeStateFIPS.contains(stateFips) else { continue }
+                guard displayedStateFIPS.contains(stateFips) else { continue }
                 
                 if let county = CountyFeature(from: feature) {
                     features.append(county)
@@ -148,13 +179,17 @@ struct CountyMapView: View {
             }
             
             await MainActor.run {
+                guard self.loadID == currentLoadID else { return }
                 self.countyFeatures = features
                 self.boundingBox = combinedRect.isNull ? nil : combinedRect
                 self.isLoading = false
             }
         } catch {
             print("Failed to load/filter GeoJSON: \(error)")
-            isLoading = false
+            await MainActor.run {
+                guard self.loadID == currentLoadID else { return }
+                self.isLoading = false
+            }
         }
     }
 
@@ -162,6 +197,13 @@ struct CountyMapView: View {
         let digits = String(value.filter { $0.isNumber })
         guard !digits.isEmpty else { return nil }
         return String(digits.suffix(5)).leftPadding(toLength: 5, withPad: "0")
+    }
+
+    private func displayStateFIPS(from activeStateFIPS: Set<String>) -> Set<String> {
+        let nonContiguous: Set<String> = ["02", "15", "72"]
+        let hasContiguousStates = activeStateFIPS.contains { !nonContiguous.contains($0) }
+        guard hasContiguousStates else { return activeStateFIPS }
+        return activeStateFIPS.subtracting(nonContiguous)
     }
 }
 
