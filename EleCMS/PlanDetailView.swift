@@ -6,6 +6,7 @@ struct PlanDetailView: View {
     let dataStore: DataStore
     @Binding var isMenuOpen: Bool
     let initialPlanID: String? // contractID-planID
+    let onBack: (() -> Void)?
     
     @State private var selectedPlanID: String?
     @State private var planDetails: PlanDetailData?
@@ -62,10 +63,11 @@ struct PlanDetailView: View {
     @State private var footprintCounties: Set<CountyMapCounty> = []
     @State private var footprintStates: Set<String> = []
     
-    init(dataStore: DataStore, isMenuOpen: Binding<Bool>, planID: String? = nil) {
+    init(dataStore: DataStore, isMenuOpen: Binding<Bool>, planID: String? = nil, onBack: (() -> Void)? = nil) {
         self.dataStore = dataStore
         self._isMenuOpen = isMenuOpen
         self.initialPlanID = planID
+        self.onBack = onBack
     }
     
     var body: some View {
@@ -77,7 +79,21 @@ struct PlanDetailView: View {
                     PageHeader(
                         title: "Plan Deep-dive",
                         subtitle: planDetails?.name ?? selectedPlanID,
-                        isMenuOpen: $isMenuOpen
+                        isMenuOpen: $isMenuOpen,
+                        rightButton: onBack != nil ? AnyView(
+                            Button(action: { onBack?() }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "chevron.left").font(.system(size: 14, weight: .bold))
+                                    Text("Back").font(.system(size: 14, weight: .bold))
+                                }
+                                .foregroundColor(.blue)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(AppColors.surface)
+                                .cornerRadius(10)
+                                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.blue.opacity(0.3), lineWidth: 1))
+                            }
+                        ) : nil
                     )
                     
                     ScrollView {

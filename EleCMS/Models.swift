@@ -1,5 +1,14 @@
 import Foundation
 
+enum NavDestination: Hashable {
+    case marketOverview
+    case geographicDeepDive
+    case carrierDeepDive
+    case planDeepDive(id: String? = nil)
+    case dataCatalog
+    case settings
+}
+
 struct EnrollmentByCountyByPlan: Identifiable {
     var id: String { "\(county)-\(plan)" }
     let county: String

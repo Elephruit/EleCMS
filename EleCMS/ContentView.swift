@@ -4,28 +4,48 @@ struct MainContainerView: View {
     let dataStore: DataStore
     
     @State private var isMenuOpen = false
-    @State private var selectedDestination: NavDestination = .marketOverview
+    @State private var navStack: [NavDestination] = [.marketOverview]
+    
+    var currentDestination: NavDestination {
+        navStack.last ?? .marketOverview
+    }
     
     var body: some View {
-        SideMenuContainer(isMenuOpen: $isMenuOpen, selectedDestination: $selectedDestination) {
-            // Using a unique ID for the content block based on selection to force fresh state if needed
+        SideMenuContainer(isMenuOpen: $isMenuOpen, selectedDestination: Binding(
+            get: { self.currentDestination },
+            set: { newDest in
+                if newDest != self.currentDestination {
+                    self.navStack.append(newDest)
+                }
+            }
+        )) {
             Group {
-                switch selectedDestination {
+                switch currentDestination {
                 case .marketOverview:
                     DashboardView(dataStore: dataStore, isMenuOpen: $isMenuOpen)
                 case .geographicDeepDive:
-                    GeographicDeepDiveView(dataStore: dataStore, isMenuOpen: $isMenuOpen, selectedDestination: $selectedDestination)
+                    GeographicDeepDiveView(dataStore: dataStore, isMenuOpen: $isMenuOpen, selectedDestination: Binding(
+                        get: { self.currentDestination },
+                        set: { self.navStack.append($0) }
+                    ))
                 case .carrierDeepDive:
-                    CarrierDeepDiveView(dataStore: dataStore, isMenuOpen: $isMenuOpen)
+                    CarrierDeepDiveView(dataStore: dataStore, isMenuOpen: $isMenuOpen, selectedDestination: Binding(
+                        get: { self.currentDestination },
+                        set: { self.navStack.append($0) }
+                    ))
                 case .planDeepDive(let planID):
-                    PlanDetailView(dataStore: dataStore, isMenuOpen: $isMenuOpen, planID: planID)
+                    PlanDetailView(dataStore: dataStore, isMenuOpen: $isMenuOpen, planID: planID, onBack: {
+                        if navStack.count > 1 {
+                            _ = navStack.removeLast()
+                        }
+                    })
                 case .dataCatalog:
                     DataManagementView(dataStore: dataStore, isMenuOpen: $isMenuOpen)
                 case .settings:
                     SettingsView(dataStore: dataStore, isMenuOpen: $isMenuOpen)
                 }
             }
-            .id(selectedDestination) // Force content recreate on nav
+            .id(currentDestination)
         }
     }
 }

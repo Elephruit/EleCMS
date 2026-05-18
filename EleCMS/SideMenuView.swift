@@ -1,14 +1,5 @@
 import SwiftUI
 
-enum NavDestination: Hashable {
-    case marketOverview
-    case geographicDeepDive
-    case carrierDeepDive
-    case planDeepDive(id: String? = nil)
-    case dataCatalog
-    case settings
-}
-
 struct SideMenuView: View {
     @Binding var selectedDestination: NavDestination
     @Binding var isMenuOpen: Bool
