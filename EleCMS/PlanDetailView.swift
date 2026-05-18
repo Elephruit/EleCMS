@@ -131,7 +131,7 @@ struct PlanDetailView: View {
     }
     
     var planSelector: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 16) {
             CustomSectionHeader(title: "Select Plan")
             
             Button(action: {
@@ -140,58 +140,66 @@ struct PlanDetailView: View {
                     isPlanPickerPresented = true
                 }
             }) {
-                HStack(spacing: 14) {
+                HStack(spacing: 16) {
                     ZStack {
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.blue.opacity(0.18))
-                            .frame(width: 44, height: 44)
+                        RoundedRectangle(cornerRadius: 14)
+                            .fill(LinearGradient(colors: [.blue, .blue.opacity(0.6)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                            .frame(width: 48, height: 48)
                         Image(systemName: "magnifyingglass")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundColor(.blue)
+                            .font(.system(size: 20, weight: .bold))
+                            .foregroundColor(.white)
                     }
                     
                     VStack(alignment: .leading, spacing: 4) {
                         Text(planDetails?.name ?? "Search Plans")
-                            .font(.system(size: 16, weight: .bold))
+                            .font(.system(size: 17, weight: .bold, design: .rounded))
                             .foregroundColor(.white)
                             .lineLimit(1)
                         
                         if let details = planDetails {
                             Text("\(details.contractID)-\(details.planID) • \(details.carrier)")
-                                .font(.caption).foregroundColor(.gray)
+                                .font(.system(size: 12, weight: .medium)).foregroundColor(.gray)
                         } else {
-                            Text("Search by Name, Contract, or ID").font(.caption).foregroundColor(.gray)
+                            Text("Search by Name, Contract, or ID").font(.system(size: 12, weight: .medium)).foregroundColor(.gray)
                         }
                     }
                     Spacer()
-                    Image(systemName: "chevron.up.chevron.down").font(.system(size: 13, weight: .bold)).foregroundColor(.gray)
+                    Image(systemName: "chevron.right").font(.system(size: 14, weight: .bold)).foregroundColor(.gray)
                 }
-                .padding(16).background(AppColors.surface).cornerRadius(18)
-                .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.white.opacity(0.06), lineWidth: 1))
+                .padding(16)
+                .background(AppColors.surface)
+                .cornerRadius(20)
+                .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.white.opacity(0.08), lineWidth: 1))
+                .shadow(color: .black.opacity(0.2), radius: 10, x: 0, y: 5)
             }
             .buttonStyle(.plain).padding(.horizontal)
         }
     }
+
     
     @ViewBuilder
     func planContent(_ details: PlanDetailData) -> some View {
         VStack(alignment: .leading, spacing: 32) {
-            // Hero Stats
-            HStack(spacing: 16) {
-                EnrollmentMetricCard(
+            // Hero Stats & Summary
+            HStack(alignment: .top, spacing: 24) {
+                HeroMetricCard(
                     title: "Total Enrollment",
-                    enrollment: details.enrollment,
+                    value: UIFormatter.formatNumber(details.enrollment),
                     momDiff: details.momDiff,
                     momPct: details.momPct,
-                    ytdDiff: details.yoyDiff, // Using YOY here as proxy for annual
+                    ytdDiff: details.yoyDiff,
                     ytdPct: details.yoyPct
                 )
                 
-                VStack(spacing: 12) {
-                    attributeCard(label: "Premium", value: details.premium != nil ? String(format: "$%.2f", details.premium!) : "N/A", icon: "dollarsign.circle")
-                    attributeCard(label: "Type", value: details.type, icon: "tag")
+                VStack(alignment: .leading, spacing: 20) {
+                    summaryItem(label: "Monthly Premium", value: currency(details.premium), icon: "dollarsign.circle.fill", color: .blue)
+                    summaryItem(label: "Plan Type", value: details.type, icon: "tag.fill", color: .purple)
                 }
-                .frame(width: 150)
+                .padding(24)
+                .frame(width: 240, height: 180, alignment: .topLeading)
+                .background(AppColors.surface)
+                .cornerRadius(24)
+                .overlay(RoundedRectangle(cornerRadius: 24).stroke(Color.white.opacity(0.08), lineWidth: 1))
             }
             .padding(.horizontal)
 
@@ -206,14 +214,49 @@ struct PlanDetailView: View {
         }
     }
 
+    func summaryItem(label: String, value: String, icon: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: icon).font(.system(size: 10)).foregroundColor(color)
+                Text(label.uppercased()).font(.system(size: 10, weight: .black)).foregroundColor(.gray).kerning(0.5)
+            }
+            Text(value).font(.system(size: 18, weight: .bold, design: .rounded)).foregroundColor(.white).lineLimit(1)
+        }
+    }
+
     var trendAndMapSection: some View {
-        HStack(alignment: .top, spacing: 16) {
-            MarketTrendChart(
-                trendData: trendData,
-                rawSelectedDate: .constant(nil),
-                chartDomain: chartDomain,
-                chartHeight: 340
-            )
+        HStack(alignment: .top, spacing: 20) {
+            VStack(alignment: .leading, spacing: 16) {
+                CustomSectionHeader(title: "Enrollment Trend")
+                ModernCard {
+                    Chart {
+                        ForEach(trendData) { point in
+                            AreaMark(x: .value("Date", point.date), y: .value("Enrollment", point.enrollment))
+                                .foregroundStyle(LinearGradient(colors: [.blue.opacity(0.3), .blue.opacity(0)], startPoint: .top, endPoint: .bottom))
+                                .interpolationMethod(.catmullRom)
+                            
+                            LineMark(x: .value("Date", point.date), y: .value("Enrollment", point.enrollment))
+                                .foregroundStyle(.blue)
+                                .interpolationMethod(.catmullRom)
+                                .lineStyle(StrokeStyle(lineWidth: 3))
+                        }
+                    }
+                    .chartYScale(domain: chartDomain)
+                    .chartYAxis {
+                        AxisMarks { value in
+                            AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5)).foregroundStyle(Color.white.opacity(0.1))
+                            AxisValueLabel { if let intVal = value.as(Int.self) { Text(UIFormatter.compactFormat(intVal)).font(.system(size: 10)) } }
+                        }
+                    }
+                    .chartXAxis {
+                        AxisMarks { value in
+                            AxisValueLabel { if let date = value.as(Date.self) { Text(date, format: .dateTime.month(.abbreviated)).font(.system(size: 10)) } }
+                        }
+                    }
+                    .frame(height: 300)
+                    .clipped()
+                }
+            }
             .frame(maxWidth: .infinity)
 
             VStack(alignment: .leading, spacing: 16) {
@@ -222,8 +265,9 @@ struct PlanDetailView: View {
                 ModernCard {
                     CountyMapView(footprintFIPS: footprintFIPS, footprintCounties: footprintCounties, states: footprintStates)
                         .id(selectedPlanID ?? "")
-                        .frame(height: 340)
+                        .frame(height: 300)
                         .cornerRadius(12)
+                        .clipped()
                 }
             }
             .frame(maxWidth: .infinity)
@@ -234,84 +278,70 @@ struct PlanDetailView: View {
         VStack(alignment: .leading, spacing: 16) {
             CustomSectionHeader(title: "Top Counties by Enrollment")
 
-            ModernCard {
-                VStack(alignment: .leading, spacing: 12) {
-                    ForEach(countyEnrollments.prefix(5)) { ce in
+            HStack(spacing: 16) {
+                ForEach(countyEnrollments.prefix(4)) { ce in
+                    VStack(alignment: .leading, spacing: 12) {
                         HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(ce.id).font(.system(size: 12, weight: .bold)).foregroundColor(.white)
-                                Text(ce.state).font(.system(size: 9, weight: .black)).foregroundColor(.blue)
-                            }
+                            Text(ce.id).font(.system(size: 15, weight: .bold)).foregroundColor(.white).lineLimit(1)
                             Spacer()
-                            Text(UIFormatter.formatNumber(ce.enrollment)).font(.system(size: 12, weight: .bold, design: .rounded)).foregroundColor(.white)
+                            Text(ce.state).font(.system(size: 10, weight: .black)).foregroundColor(.blue)
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(UIFormatter.formatNumber(ce.enrollment))
+                                .font(.system(size: 24, weight: .black, design: .rounded))
+                                .foregroundColor(.white)
+                            Text("Enrolled").font(.system(size: 10, weight: .bold)).foregroundColor(.gray)
                         }
                     }
+                    .padding(20)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(AppColors.surface)
+                    .cornerRadius(20)
+                    .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.white.opacity(0.08), lineWidth: 1))
                 }
             }
         }
     }
-    
-    func attributeCard(label: String, value: String, icon: String) -> some View {
-        ModernCard {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 4) {
-                    Image(systemName: icon).font(.system(size: 8)).foregroundColor(.blue)
-                    Text(label.uppercased()).font(.system(size: 8, weight: .black)).foregroundColor(.gray)
-                }
-                Text(value).font(.system(size: 13, weight: .bold)).foregroundColor(.white).lineLimit(1)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
+
 
     func planDetailsSection(_ details: PlanDetailData) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            CustomSectionHeader(title: "Plan Details", subtitle: "Landscape benefits and cost fields")
+        VStack(alignment: .leading, spacing: 24) {
+            CustomSectionHeader(title: "Plan Architecture", subtitle: "Structured Benefits & Metrics")
 
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
-                detailTile(label: "Premium", value: currency(details.premium), icon: "dollarsign.circle")
-                detailTile(label: "Deductible", value: currency(details.deductible), icon: "creditcard")
-                detailTile(label: "Part C Premium", value: currency(details.partCPremium), icon: "cross.case")
-                detailTile(label: "Part D Total Premium", value: currency(details.partDTotalPremium), icon: "pills")
-                detailTile(label: "Part D Deductible", value: currency(details.partDDeductible), icon: "creditcard")
-                detailTile(label: "MOOP", value: currency(details.moopAmount), icon: "shield")
-                detailTile(label: "Part D OOP Threshold", value: currency(details.oopThreshold), icon: "chart.line.uptrend.xyaxis")
-                detailTile(label: "Part D Coverage", value: textValue(details.partDCoverage), icon: "checkmark.seal")
-                detailTile(label: "Drug Benefit", value: [details.drugBenefitCategory, details.drugBenefitType].compactMap { cleanText($0) }.joined(separator: " / "), icon: "list.bullet.clipboard")
-                detailTile(label: "Basic Rx Premium", value: currency(details.partDBasicPremium), icon: "dollarsign")
-                detailTile(label: "Supplemental Rx Premium", value: currency(details.partDSupplementalPremium), icon: "plus.circle")
-                detailTile(label: "LIPS Subsidy", value: currency(details.lowIncomePremiumSubsidy), icon: "person.crop.circle.badge.checkmark")
-                detailTile(label: "Part D LIPS CMS Pays", value: currency(details.partDLipsAmount), icon: "building.columns")
-                detailTile(label: "Low-Income Premium", value: currency(details.partDLowIncomePremium), icon: "person.text.rectangle")
-                detailTile(label: "No Part D Deductible Tier", value: textValue(details.noPartDDeductible), icon: "tag")
-                detailTile(label: "Zero-Dollar Cost Share", value: textValue(details.zeroDollarCostSharing), icon: "0.circle")
-                detailTile(label: "Overall Stars", value: rating(details.overallStarRating), icon: "star")
-                detailTile(label: "Part C / D Stars", value: "\(rating(details.partCStarRating)) / \(rating(details.partDStarRating))", icon: "star.leadinghalf.filled")
-            }
-        }
-    }
-
-    func detailTile(label: String, value: String, icon: String) -> some View {
-        ModernCard {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 6) {
-                    Image(systemName: icon)
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(.blue)
-                    Text(label.uppercased())
-                        .font(.system(size: 8, weight: .black))
-                        .foregroundColor(.gray)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
+            HStack(alignment: .top, spacing: 20) {
+                VStack(spacing: 20) {
+                    DataPanel(title: "Financial Summary", icon: "dollarsign.circle.fill") {
+                        DataRow(label: "Monthly Premium", value: currency(details.premium))
+                        DataRow(label: "Medical Deductible", value: currency(details.deductible))
+                        DataRow(label: "MOOP Amount", value: currency(details.moopAmount))
+                        DataRow(label: "Part C Premium", value: currency(details.partCPremium), isLast: true)
+                    }
+                    
+                    DataPanel(title: "Quality & Ratings", icon: "star.fill") {
+                        RatingStarsRow(label: "Overall Rating", rating: details.overallStarRating)
+                        RatingStarsRow(label: "Part C Rating", rating: details.partCStarRating)
+                        RatingStarsRow(label: "Part D Rating", rating: details.partDStarRating, isLast: true)
+                    }
                 }
-                Text(value.isEmpty ? "N/A" : value)
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.75)
-                    .frame(minHeight: 36, alignment: .topLeading)
+                .frame(maxWidth: .infinity)
+
+                VStack(spacing: 20) {
+                    DataPanel(title: "Drug & Pharmacy", icon: "pills.fill") {
+                        DataRow(label: "Part D Total Premium", value: currency(details.partDTotalPremium))
+                        DataRow(label: "Part D Deductible", value: currency(details.partDDeductible))
+                        DataRow(label: "Part D OOP Threshold", value: currency(details.oopThreshold))
+                        DataRow(label: "Part D Coverage", value: textValue(details.partDCoverage))
+                        DataRow(label: "Drug Benefit", value: [details.drugBenefitCategory, details.drugBenefitType].compactMap { cleanText($0) }.joined(separator: " / "))
+                        DataRow(label: "LIPS Subsidy", value: currency(details.lowIncomePremiumSubsidy))
+                        DataRow(label: "LIPS CMS Pays", value: currency(details.partDLipsAmount))
+                        DataRow(label: "Low-Income Premium", value: currency(details.partDLowIncomePremium))
+                        DataRow(label: "Zero-Dollar Cost Share", value: textValue(details.zeroDollarCostSharing))
+                        DataRow(label: "No Part D Ded Tier", value: textValue(details.noPartDDeductible), isLast: true)
+                    }
+                }
+                .frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
     
@@ -633,6 +663,164 @@ struct PlanDetailView: View {
         return CountyMapCounty(state: state, name: name)
     }
 }
+
+// MARK: - Sub-components
+
+struct DataPanel<Content: View>: View {
+    let title: String
+    let icon: String
+    let content: Content
+    
+    init(title: String, icon: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.icon = icon
+        self.content = content()
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: icon).font(.system(size: 14, weight: .bold)).foregroundColor(.blue)
+                Text(title.uppercased()).font(.system(size: 12, weight: .black)).foregroundColor(.white).kerning(1.0)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+            .background(Color.white.opacity(0.03))
+            
+            Divider().background(Color.white.opacity(0.1))
+            
+            VStack(spacing: 0) {
+                content
+            }
+            .padding(.vertical, 8)
+        }
+        .background(AppColors.surface)
+        .cornerRadius(20)
+        .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.white.opacity(0.08), lineWidth: 1))
+    }
+}
+
+struct DataRow: View {
+    let label: String
+    let value: String
+    var isLast: Bool = false
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(label).font(.system(size: 13, weight: .medium)).foregroundColor(.gray)
+                Spacer()
+                Text(value.isEmpty ? "N/A" : value)
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+            
+            if !isLast {
+                Divider().padding(.horizontal, 20).background(Color.white.opacity(0.05))
+            }
+        }
+    }
+}
+
+struct RatingStarsRow: View {
+    let label: String
+    let rating: Double?
+    var isLast: Bool = false
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(label).font(.system(size: 13, weight: .medium)).foregroundColor(.gray)
+                Spacer()
+                HStack(spacing: 4) {
+                    if let r = rating {
+                        Text(String(format: "%.1f", r)).font(.system(size: 14, weight: .bold, design: .rounded)).foregroundColor(.white).padding(.trailing, 4)
+                        ForEach(0..<5) { index in
+                            starImage(for: Double(index), rating: r)
+                                .font(.system(size: 10))
+                                .foregroundColor(Double(index) < r ? .yellow : .gray.opacity(0.3))
+                        }
+                    } else {
+                        Text("N/A").font(.system(size: 14, weight: .bold)).foregroundColor(.white)
+                    }
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+            
+            if !isLast {
+                Divider().padding(.horizontal, 20).background(Color.white.opacity(0.05))
+            }
+        }
+    }
+    
+    func starImage(for index: Double, rating: Double) -> Image {
+        if index + 1 <= rating {
+            return Image(systemName: "star.fill")
+        } else if index < rating {
+            return Image(systemName: "star.leadinghalf.filled")
+        } else {
+            return Image(systemName: "star")
+        }
+    }
+}
+
+struct HeroMetricCard: View {
+    let title: String
+    let value: String
+    let momDiff: Int
+    let momPct: Double
+    let ytdDiff: Int
+    let ytdPct: Double
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title.uppercased())
+                    .font(.system(size: 12, weight: .black))
+                    .foregroundColor(.blue.opacity(0.8))
+                    .kerning(1.0)
+                Text(value)
+                    .font(.system(size: 40, weight: .black, design: .rounded))
+                    .foregroundColor(.white)
+            }
+            
+            HStack(spacing: 24) {
+                growthMetric(label: "MoM", diff: momDiff, pct: momPct)
+                growthMetric(label: "YTD", diff: ytdDiff, pct: ytdPct)
+            }
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: 180, alignment: .leading)
+        .background(
+            ZStack {
+                AppColors.surface
+                LinearGradient(colors: [.blue.opacity(0.1), .clear], startPoint: .topLeading, endPoint: .bottomTrailing)
+            }
+        )
+        .cornerRadius(24)
+        .overlay(RoundedRectangle(cornerRadius: 24).stroke(Color.white.opacity(0.08), lineWidth: 1))
+        .shadow(color: .black.opacity(0.3), radius: 20, x: 0, y: 10)
+    }
+    
+    private func growthMetric(label: String, diff: Int, pct: Double) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label).font(.system(size: 11, weight: .bold)).foregroundColor(.gray)
+            HStack(spacing: 4) {
+                Image(systemName: diff >= 0 ? "arrow.up.right" : "arrow.down.right")
+                    .font(.system(size: 10, weight: .bold))
+                Text("\(diff >= 0 ? "+" : "")\(UIFormatter.formatNumber(diff))")
+                    .font(.system(size: 14, weight: .black, design: .rounded))
+                Text(String(format: "(%.1f%%)", pct))
+                    .font(.system(size: 12, weight: .bold))
+            }
+            .foregroundColor(diff >= 0 ? .green : .red)
+        }
+    }
+}
+
 
 private extension String {
     func leftPadding(toLength: Int, withPad character: Character) -> String {
