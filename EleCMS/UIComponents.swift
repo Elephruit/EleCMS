@@ -377,7 +377,10 @@ struct FilterOverlay: View {
                 .onTapGesture { withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { isPresented = false } }
             
             VStack(spacing: 0) {
-                RoundedRectangle(cornerRadius: 3).fill(Color.white.opacity(0.2)).frame(width: 40, height: 6).padding(.top, 10).padding(.bottom, 10)
+                // Safety Spacer for status bar/notch
+                Color.clear.frame(height: 10)
+                
+                RoundedRectangle(cornerRadius: 3).fill(Color.white.opacity(0.2)).frame(width: 40, height: 6).padding(.top, 6).padding(.bottom, 10)
                 
                 HStack {
                     Button("Cancel") { withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { isPresented = false } }
@@ -446,7 +449,7 @@ struct FilterOverlay: View {
             .cornerRadius(24, corners: [.topLeft, .topRight])
             .shadow(color: .black.opacity(0.5), radius: 20, x: 0, y: -10)
         }
-        .ignoresSafeArea()
+        .ignoresSafeArea(edges: .bottom)
     }
     
     func filterSection<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {

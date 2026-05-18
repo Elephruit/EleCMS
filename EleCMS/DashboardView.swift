@@ -247,16 +247,30 @@ struct DashboardView: View {
     func fetchFilterOptions() {
         Task {
             do {
-                let stateRows = try dataStore.database.query(sql: "SELECT DISTINCT state FROM county_dim WHERE state != '' ORDER BY state")
+                // Get states only from enrollment records to match CPSC source
+                let stateRows = try dataStore.database.query(sql: """
+                    SELECT DISTINCT co.state 
+                    FROM county_dim co 
+                    JOIN enrollment_records e ON e.county_id = co.county_id 
+                    WHERE co.state != '' 
+                    ORDER BY co.state
+                """)
                 let states = stateRows.compactMap { $0["state"] as? String }
+                
+                // Get plan types only from enrollment records to match CPSC source
                 let typeRows = try dataStore.database.query(sql: """
-                    SELECT DISTINCT type FROM plan_dim 
-                    WHERE type IS NOT NULL AND type != '' 
-                    AND type NOT IN ('D-SNP', 'C-SNP', 'I-SNP')
-                    ORDER BY type
+                    SELECT DISTINCT p.type FROM plan_dim p
+                    JOIN enrollment_records e ON e.plan_id = p.plan_id
+                    WHERE p.type IS NOT NULL AND p.type != '' 
+                    AND p.type NOT IN ('D-SNP', 'C-SNP', 'I-SNP')
+                    ORDER BY p.type
                 """)
                 let types = typeRows.compactMap { $0["type"] as? String }
-                await MainActor.run { self.availableStates = states; self.availablePlanTypes = types }
+                
+                await MainActor.run { 
+                    self.availableStates = states
+                    self.availablePlanTypes = types 
+                }
             } catch { print("Filter options failed: \(error)") }
         }
     }
