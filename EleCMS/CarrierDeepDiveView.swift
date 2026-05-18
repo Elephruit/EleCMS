@@ -406,8 +406,13 @@ struct CarrierDeepDiveView: View {
         isLoading = true
         Task {
             do {
-                let pRow = try dataStore.database.query(sql: "SELECT period_id FROM periods ORDER BY year DESC, month DESC LIMIT 1")
-                guard let pid = pRow.first?["period_id"] as? Int else { isLoading = false; return }
+                let pRow = try dataStore.database.query(sql: "SELECT period_id, year, month FROM periods ORDER BY year DESC, month DESC LIMIT 1")
+                guard let currentPeriod = pRow.first.map({ Period(id: $0["period_id"] as? Int ?? 0, year: $0["year"] as? Int ?? 0, month: $0["month"] as? Int ?? 0) }) else {
+                    await MainActor.run { self.isLoading = false }
+                    return
+                }
+                
+                let pid = currentPeriod.id
                 
                 let totalRow = try dataStore.database.query(sql: "SELECT SUM(e.enrollment) as total FROM enrollment_records e JOIN plan_dim p ON p.plan_id = e.plan_id JOIN carrier_dim c ON c.carrier_id = p.carrier_id WHERE c.name = ? AND e.period_id = ?", arguments: [carrier, pid])
                 let total = totalRow.first?["total"] as? Int ?? 0
